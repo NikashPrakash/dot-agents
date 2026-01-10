@@ -1,0 +1,92 @@
+name: Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Verify jq installed
+        run: jq --version
+
+      - name: Make CLI executable
+        run: chmod +x src/bin/dot-agents
+
+      - name: Test --version
+        run: |
+          ./src/bin/dot-agents --version
+          ./src/bin/dot-agents --version | grep -q "dot-agents"
+
+      - name: Test --help
+        run: |
+          ./src/bin/dot-agents --help
+          ./src/bin/dot-agents --help | grep -q "USAGE"
+
+      - name: Test init --dry-run
+        run: |
+          ./src/bin/dot-agents init --dry-run
+
+      - name: Test init (creates ~/.agents/)
+        run: |
+          # Remove if exists from previous run
+          rm -rf ~/.agents
+          ./src/bin/dot-agents init
+          test -d ~/.agents
+          test -f ~/.agents/config.json
+
+      - name: Test status
+        run: |
+          ./src/bin/dot-agents status
+          ./src/bin/dot-agents status --json | jq .
+
+      - name: Test doctor
+        run: |
+          ./src/bin/dot-agents doctor
+
+      - name: Test add (with test project)
+        run: |
+          mkdir -p /tmp/test-project
+          ./src/bin/dot-agents add /tmp/test-project --name ci-test
+          ./src/bin/dot-agents status | grep -q "ci-test"
+
+      - name: Test audit
+        run: |
+          ./src/bin/dot-agents audit
+
+      - name: Test remove --dry-run
+        run: |
+          ./src/bin/dot-agents remove ci-test --dry-run
+
+      - name: Test context
+        run: |
+          ./src/bin/dot-agents context --compact | jq .
+
+      - name: Test sync (no git repo)
+        run: |
+          ./src/bin/dot-agents sync status 2>&1 | grep -q "not a git repository" || true
+
+      - name: Cleanup
+        run: |
+          rm -rf ~/.agents
+          rm -rf /tmp/test-project

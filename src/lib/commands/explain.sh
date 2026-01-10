@@ -1,0 +1,753 @@
+#!/bin/bash
+# dot-agents/lib/commands/explain.sh
+# Self-documenting system descriptions for AI agents
+
+cmd_explain_help() {
+  cat << EOF
+${BOLD}dot-agents explain${NC} - Self-documenting system descriptions
+
+${BOLD}USAGE${NC}
+    dot-agents explain [topic]
+    dot-agents explain --agent <name>
+
+${BOLD}TOPICS${NC}
+    (none)          Overview of ~/.agents structure
+    rules           How rules work
+    scripts         How scripts work
+    settings        How settings work
+    mcp             How MCP configs work
+    commands        How custom commands work
+    config          What config.json fields mean
+    symlinks        How symlinks and hard links work
+    platforms       Supported AI agent platforms
+
+${BOLD}OPTIONS${NC}
+    --agent <name>  Explain config patterns for a specific agent
+                    (cursor, claude-code, codex, opencode)
+    --verbose, -v   Show detailed information
+    --help, -h      Show this help
+
+${BOLD}DESCRIPTION${NC}
+    Provides self-documenting descriptions of the dot-agents system.
+    Useful for AI agents that need to understand the configuration
+    structure and how to interact with it.
+
+${BOLD}EXAMPLES${NC}
+    dot-agents explain              # Overview of the system
+    dot-agents explain rules        # How rules work
+    dot-agents explain --agent cursor    # Cursor-specific info
+
+EOF
+}
+
+cmd_explain() {
+  local topic=""
+  local agent_name=""
+
+  # Parse flags
+  REMAINING_ARGS=()
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --agent)
+        agent_name="$2"
+        shift 2
+        ;;
+      --verbose|-v)
+        VERBOSE=true
+        shift
+        ;;
+      --help|-h)
+        cmd_explain_help
+        return 0
+        ;;
+      -*)
+        log_error "Unknown option: $1"
+        return 1
+        ;;
+      *)
+        REMAINING_ARGS+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  # Get topic from remaining args
+  if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
+    topic="${REMAINING_ARGS[0]}"
+  fi
+
+  # Handle agent-specific explanation
+  if [ -n "$agent_name" ]; then
+    explain_agent "$agent_name"
+    return $?
+  fi
+
+  # Route to topic
+  case "$topic" in
+    ""|overview)
+      explain_overview
+      ;;
+    rules)
+      explain_rules
+      ;;
+    scripts)
+      explain_scripts
+      ;;
+    settings)
+      explain_settings
+      ;;
+    mcp)
+      explain_mcp
+      ;;
+    commands)
+      explain_commands
+      ;;
+    config|config.json)
+      explain_config
+      ;;
+    symlinks|links)
+      explain_symlinks
+      ;;
+    platforms|agents)
+      explain_platforms
+      ;;
+    *)
+      log_error "Unknown topic: $topic"
+      echo ""
+      echo "Available topics: rules, scripts, settings, mcp, commands, config, symlinks, platforms"
+      return 1
+      ;;
+  esac
+}
+
+explain_overview() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ dot-agents Overview
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT IS DOT-AGENTS?
+  A unified configuration layer for AI coding agents.
+  One ~/.agents/ directory manages configs for Cursor, Claude Code,
+  Codex, and OpenCode - all from a single, git-trackable location.
+
+DIRECTORY STRUCTURE:
+  ~/.agents/
+  ├── config.json          # Project registry and settings
+  ├── rules/               # Agent instructions
+  │   ├── global/          # Apply to ALL projects
+  │   └── {project}/       # Project-specific rules
+  ├── scripts/             # Helper scripts
+  │   ├── global/
+  │   └── {project}/
+  ├── commands/            # Custom slash commands
+  │   ├── global/
+  │   └── {project}/
+  ├── settings/            # Native agent configs
+  │   ├── global/
+  │   └── {project}/
+  ├── mcp/                 # MCP server configs
+  │   ├── global/
+  │   └── {project}/
+  └── local/               # Machine-specific (gitignored)
+
+HOW IT WORKS:
+  1. Configs live in ~/.agents/ (single source of truth)
+  2. Symlinks/hard links connect to project directories
+  3. Edit in one place → changes apply everywhere
+  4. Git-track ~/.agents/ for sync across machines
+
+KEY COMMANDS:
+  dot-agents init           # Set up ~/.agents/
+  dot-agents add <path>     # Register a project
+  dot-agents status         # See all projects
+  dot-agents doctor         # Check for issues
+  dot-agents audit          # See applied configs
+
+For more details, run:
+  dot-agents explain <topic>    # rules, settings, mcp, etc.
+  dot-agents explain --agent <name>  # cursor, claude-code, etc.
+
+EOF
+}
+
+explain_rules() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Understanding: Rules
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT ARE RULES?
+  Rules are instruction files that tell AI agents how to behave.
+  They're written in Markdown (.mdc or .md) with optional YAML frontmatter.
+
+WHERE DO THEY LIVE?
+  ~/.agents/rules/global/    → Apply to ALL projects
+  ~/.agents/rules/{project}/ → Apply to specific project only
+
+FILE NAMING:
+  rules.mdc         → Applies to ALL agents
+  cursor.mdc        → Applies to Cursor only
+  claude-code.mdc   → Applies to Claude Code only
+  codex.md          → Applies to Codex only
+
+FRONTMATTER OPTIONS:
+  ---
+  alwaysApply: true    # Always include in context
+  globs: ["*.py"]      # Only apply to matching files
+  ---
+
+HOW THEY GET TO REPOS:
+  Cursor:      Hard links to .cursor/rules/*.mdc
+  Claude Code: Symlink CLAUDE.md → ~/.agents/rules/...
+  Codex:       Symlink AGENTS.md → ~/.agents/rules/...
+
+EXAMPLE:
+  ~/.agents/rules/global/rules.mdc
+  ─────────────────────────────────
+  ---
+  alwaysApply: true
+  ---
+
+  # Coding Standards
+  - Write clear, readable code
+  - Add comments for complex logic
+  - Follow existing patterns
+
+COMMANDS:
+  dot-agents audit              # See which rules are applied
+  dot-agents audit --agent cursor  # Cursor rules only
+
+EOF
+}
+
+explain_scripts() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Understanding: Scripts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT ARE SCRIPTS?
+  Helper scripts that can be called by AI agents or manually.
+  They automate common tasks like building, testing, or deploying.
+
+WHERE DO THEY LIVE?
+  ~/.agents/scripts/global/    → Available to ALL projects
+  ~/.agents/scripts/{project}/ → Project-specific scripts
+
+FILE NAMING:
+  Use descriptive names: build.sh, test.sh, deploy.sh, format.sh
+
+EXAMPLE:
+  ~/.agents/scripts/global/run-tests.sh
+  ─────────────────────────────────────
+  #!/bin/bash
+  # Run project tests with coverage
+  npm test -- --coverage
+
+USAGE:
+  Scripts are typically symlinked to project directories or
+  called directly by AI agents that understand the structure.
+
+BEST PRACTICES:
+  - Make scripts executable: chmod +x script.sh
+  - Include usage comments at the top
+  - Use set -euo pipefail for safety
+  - Keep global scripts generic
+
+EOF
+}
+
+explain_settings() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Understanding: Settings
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT ARE SETTINGS?
+  Native configuration files for each AI agent platform.
+  These are JSON/YAML files that control agent behavior beyond rules.
+
+WHERE DO THEY LIVE?
+  ~/.agents/settings/global/    → Apply to ALL projects
+  ~/.agents/settings/{project}/ → Project-specific settings
+
+EXAMPLES BY PLATFORM:
+
+  Claude Code:
+    ~/.agents/settings/global/claude-settings.json
+    (becomes .claude/settings.json in projects)
+
+  Cursor:
+    ~/.agents/settings/global/cursor-settings.json
+    (becomes .cursor/settings.json in projects)
+
+HOW THEY GET TO REPOS:
+  Symlinks connect ~/.agents/settings/ to project directories.
+
+EXAMPLE:
+  ~/.agents/settings/global/claude-settings.json
+  ─────────────────────────────────────────────
+  {
+    "permissions": {
+      "allow_bash": true,
+      "allow_file_write": true
+    },
+    "model": "opus-4.5"
+  }
+
+COMMANDS:
+  dot-agents audit --agent claude-code  # See Claude settings
+
+EOF
+}
+
+explain_mcp() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Understanding: MCP (Model Context Protocol)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT IS MCP?
+  Model Context Protocol - a standard for connecting AI agents
+  to external tools and services (databases, APIs, etc.).
+
+WHERE DO MCP CONFIGS LIVE?
+  ~/.agents/mcp/global/    → Apply to ALL projects
+  ~/.agents/mcp/{project}/ → Project-specific MCP servers
+
+HOW THEY GET TO REPOS:
+  Claude Code: .mcp.json symlink
+  Cursor:      .cursor/mcp.json symlink
+
+EXAMPLE:
+  ~/.agents/mcp/global/mcp.json
+  ─────────────────────────────
+  {
+    "servers": {
+      "filesystem": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/mcp-server-filesystem"]
+      },
+      "postgres": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/mcp-server-postgres"],
+        "env": {
+          "DATABASE_URL": "postgres://..."
+        }
+      }
+    }
+  }
+
+COMMON MCP SERVERS:
+  - @anthropic/mcp-server-filesystem
+  - @anthropic/mcp-server-postgres
+  - @anthropic/mcp-server-github
+  - @anthropic/mcp-server-linear
+
+COMMANDS:
+  dot-agents audit              # Shows MCP status
+
+EOF
+}
+
+explain_commands() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Understanding: Custom Commands
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT ARE CUSTOM COMMANDS?
+  Slash commands that extend AI agent capabilities.
+  Written as Markdown files, they become available as /command.
+
+WHERE DO THEY LIVE?
+  ~/.agents/commands/global/    → Available to ALL projects
+  ~/.agents/commands/{project}/ → Project-specific commands
+
+HOW THEY GET TO REPOS:
+  Claude Code: .claude/commands/*.md symlinks
+  Cursor:      .cursor/commands/*.md symlinks
+
+FILE NAMING:
+  The filename becomes the command name:
+    commit.md  → /commit
+    pr.md      → /pr
+    deploy.md  → /deploy
+
+EXAMPLE:
+  ~/.agents/commands/global/commit.md
+  ────────────────────────────────────
+  # /commit - Create a git commit
+
+  Create a well-formed git commit with the following steps:
+  1. Check git status for staged changes
+  2. Generate a descriptive commit message
+  3. Run: git commit -m "<message>"
+
+  Commit message format:
+  - feat: new feature
+  - fix: bug fix
+  - docs: documentation
+  - refactor: code cleanup
+
+USAGE IN AGENT:
+  Just type /commit and the agent will follow the instructions.
+
+EOF
+}
+
+explain_config() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Understanding: config.json
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT IS config.json?
+  The central registry for dot-agents. Contains:
+  - Registered projects and their paths
+  - Feature flags
+  - User preferences
+
+LOCATION:
+  ~/.agents/config.json
+
+STRUCTURE:
+  {
+    "projects": {
+      "myproject": {
+        "path": "~/Github/myproject"
+      }
+    },
+    "agents": {
+      "active": ["cursor", "claude-code"]
+    },
+    "features": {
+      "tasks": false,
+      "history": false
+    }
+  }
+
+KEY FIELDS:
+
+  projects.<name>.path
+    The filesystem path to the project directory.
+    Use ~ for home directory (portable across machines).
+
+  agents.active
+    List of AI agents you use. Used for audit and doctor commands.
+
+  features.tasks
+    Enable task tracking (opt-in feature).
+
+  features.history
+    Enable activity logging (opt-in feature).
+
+MODIFICATION:
+  Projects are managed via CLI:
+    dot-agents add ~/path/to/project
+    dot-agents remove myproject
+
+  Features are managed via CLI:
+    dot-agents features enable tasks
+    dot-agents features disable history
+
+  You CAN edit this file directly, but CLI commands are safer.
+
+EOF
+}
+
+explain_symlinks() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Understanding: Symlinks & Hard Links
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHY TWO TYPES?
+  Cursor doesn't follow symlinks for .cursor/rules/*.mdc files.
+  Other agents (Claude Code, Codex) work fine with symlinks.
+
+WHAT DOT-AGENTS CREATES:
+
+  Hard Links (Cursor only):
+    .cursor/rules/global--rules.mdc  →→  ~/.agents/rules/global/rules.mdc
+    .cursor/rules/project--rules.mdc →→  ~/.agents/rules/{project}/rules.mdc
+
+    Hard links share the same file content. Changes in either
+    location affect the other immediately.
+
+  Symlinks (Other agents):
+    CLAUDE.md     →  ~/.agents/rules/{project}/CLAUDE.md
+    AGENTS.md     →  ~/.agents/rules/{project}/AGENTS.md
+    .claude/      →  ~/.agents/settings/{project}/
+    .mcp.json     →  ~/.agents/mcp/{project}/mcp.json
+
+    Symlinks are pointers. The actual file lives in ~/.agents/.
+
+NAMING CONVENTION:
+  Hard links in .cursor/rules/ are prefixed:
+    global--<filename>     From ~/.agents/rules/global/
+    {project}--<filename>  From ~/.agents/rules/{project}/
+
+VERIFICATION:
+  dot-agents doctor        # Checks for broken links
+  dot-agents audit         # Shows all applied links
+
+REPAIR:
+  dot-agents add <path> --force  # Recreate links
+
+EOF
+}
+
+explain_platforms() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Supported Platforms
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CURSOR
+  IDE and CLI for AI-assisted coding.
+  Config locations:
+    .cursor/rules/*.mdc    - Rules (hard links required)
+    .cursor/mcp.json       - MCP servers
+    .cursor/settings.json  - IDE settings
+    .cursorignore          - File exclusions
+  Legacy (deprecated):
+    .cursorrules           - Use .cursor/rules/ instead
+
+CLAUDE CODE
+  Anthropic's CLI for Claude.
+  Config locations:
+    CLAUDE.md              - Project instructions
+    .claude/settings.json  - Settings
+    .mcp.json              - MCP servers
+    .claude/commands/*.md  - Custom commands
+
+CODEX (OpenAI)
+  OpenAI's CLI for GPT models.
+  Config locations:
+    AGENTS.md              - Project instructions
+    .codex/config.toml     - Settings
+
+OPENCODE
+  Open-source AI coding assistant.
+  Config locations:
+    opencode.json          - Project config
+    .opencode/agent/*.md   - Agent definitions
+
+DETECTION:
+  dot-agents doctor        # Shows installed agents
+  dot-agents context       # Agent info in JSON
+
+For platform-specific details:
+  dot-agents explain --agent cursor
+  dot-agents explain --agent claude-code
+
+EOF
+}
+
+explain_agent() {
+  local agent="$1"
+
+  case "$agent" in
+    cursor)
+      explain_agent_cursor
+      ;;
+    claude-code|claude)
+      explain_agent_claude
+      ;;
+    codex)
+      explain_agent_codex
+      ;;
+    opencode)
+      explain_agent_opencode
+      ;;
+    *)
+      log_error "Unknown agent: $agent"
+      echo ""
+      echo "Available agents: cursor, claude-code, codex, opencode"
+      return 1
+      ;;
+  esac
+}
+
+explain_agent_cursor() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Cursor Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ABOUT:
+  Cursor is an AI-first code editor built on VS Code.
+  It uses HARD LINKS for rules (doesn't follow symlinks).
+
+CONFIG FILES:
+
+  .cursor/rules/*.mdc
+    Rule files with optional frontmatter.
+    IMPORTANT: Must be hard links, not symlinks.
+
+    Frontmatter options:
+      alwaysApply: true    # Always include
+      globs: ["*.ts"]      # Apply to matching files
+
+  .cursor/mcp.json
+    MCP server configuration.
+    Can be symlink → ~/.agents/mcp/
+
+  .cursor/settings.json
+    Editor and AI settings.
+    Can be symlink → ~/.agents/settings/
+
+  .cursorignore
+    Files to exclude from AI context.
+    Syntax matches .gitignore.
+
+DEPRECATED:
+  .cursorrules - Single file in project root.
+  Migrate with: dot-agents migrate cursorrules
+
+DETECTION:
+  Cursor App: /Applications/Cursor.app (macOS)
+  Cursor CLI: cursor --version
+
+HOW DOT-AGENTS MANAGES IT:
+  ~/.agents/rules/global/*.mdc      → .cursor/rules/global--*.mdc (hard link)
+  ~/.agents/rules/{project}/*.mdc   → .cursor/rules/{project}--*.mdc (hard link)
+  ~/.agents/mcp/{project}/          → .cursor/mcp.json (symlink)
+
+EOF
+}
+
+explain_agent_claude() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Claude Code Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ABOUT:
+  Claude Code is Anthropic's official CLI for Claude.
+  It supports symlinks and has a rich configuration system.
+
+CONFIG FILES:
+
+  CLAUDE.md
+    Main instruction file in project root.
+    Contains rules and guidelines for Claude.
+    Can be symlink → ~/.agents/rules/
+
+  CLAUDE.local.md
+    Personal notes (gitignored).
+    Not managed by dot-agents.
+
+  .claude/settings.json
+    Shared project settings.
+    Can be symlink → ~/.agents/settings/
+
+  .claude/settings.local.json
+    Personal settings (gitignored).
+    Not managed by dot-agents.
+
+  .mcp.json
+    MCP server configuration.
+    Can be symlink → ~/.agents/mcp/
+
+  .claude/commands/*.md
+    Custom slash commands.
+    Can be symlink → ~/.agents/commands/
+
+GLOBAL CONFIGS:
+  ~/.claude/settings.json - Global Claude settings
+
+DETECTION:
+  claude --version
+
+HOW DOT-AGENTS MANAGES IT:
+  ~/.agents/rules/{project}/CLAUDE.md  → CLAUDE.md (symlink)
+  ~/.agents/settings/{project}/        → .claude/ (symlink)
+  ~/.agents/mcp/{project}/mcp.json     → .mcp.json (symlink)
+  ~/.agents/commands/{project}/        → .claude/commands/ (symlink)
+
+EOF
+}
+
+explain_agent_codex() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Codex Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ABOUT:
+  Codex is OpenAI's CLI for GPT models.
+  Uses AGENTS.md for instructions (OpenAI's standard format).
+
+CONFIG FILES:
+
+  AGENTS.md
+    Main instruction file in project root.
+    Uses OpenAI's standard agent instruction format.
+    Can be symlink → ~/.agents/rules/
+
+  AGENTS.override.md
+    Override instructions (higher priority).
+
+  .codex/config.toml
+    Project configuration in TOML format.
+
+  ~/.codex/config.toml
+    Global Codex configuration.
+
+TOML CONFIG EXAMPLE:
+  [model]
+  name = "gpt-4o"
+
+  [permissions]
+  allow_bash = true
+  allow_file_write = true
+
+DETECTION:
+  codex --version
+
+HOW DOT-AGENTS MANAGES IT:
+  ~/.agents/rules/{project}/AGENTS.md  → AGENTS.md (symlink)
+  ~/.agents/settings/{project}/        → .codex/ (symlink)
+
+EOF
+}
+
+explain_agent_opencode() {
+  cat << 'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ OpenCode Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ABOUT:
+  OpenCode is an open-source AI coding assistant.
+  It uses JSON configuration and Markdown agent files.
+
+CONFIG FILES:
+
+  opencode.json
+    Project configuration in project root.
+
+  .opencode/agent/*.md
+    Agent definition files.
+
+  ~/.config/opencode/opencode.json
+    Global OpenCode configuration.
+
+JSON CONFIG EXAMPLE:
+  {
+    "model": "claude-opus-4-5",
+    "agent_dir": ".opencode/agent"
+  }
+
+DETECTION:
+  opencode --version
+
+HOW DOT-AGENTS MANAGES IT:
+  ~/.agents/settings/{project}/opencode.json → opencode.json (symlink)
+  ~/.agents/rules/{project}/                 → .opencode/agent/ (symlink)
+
+EOF
+}
