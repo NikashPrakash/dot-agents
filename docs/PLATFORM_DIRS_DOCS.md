@@ -9,7 +9,7 @@ The cross-platform matrix below counts only officially documented project-level 
 
 ## Official Platform Locations
 
-Official docs checked on 2026-03-30.
+Official docs checked on 2026-03-30. The Codex section was refreshed against current OpenAI docs on 2026-04-03.
 
 ### Cursor
 
@@ -32,12 +32,12 @@ Official docs checked on 2026-03-30.
 
 ### Codex (OpenAI)
 
-- [Instructions](https://developers.openai.com/codex/guides/agents-md/): Codex reads `AGENTS.md` and `AGENTS.override.md` from the repo tree, plus `~/.codex/AGENTS.md` and `~/.codex/AGENTS.override.md` at user scope.
-- [Skills](https://developers.openai.com/codex/skills/): project skills live in `.agents/skills/<name>/SKILL.md`; user-level skills live in `~/.agents/skills/<name>/SKILL.md`.
-- [Subagents](https://developers.openai.com/codex/subagents): Codex documents subagent definition files under `.codex/agents/*.toml`.
-- [Config and MCP](https://developers.openai.com/codex/config-reference/): project config lives in `.codex/config.toml`; user-level config lives in `~/.codex/config.toml`. MCP servers are configured inside that TOML.
-- [Hooks](https://developers.openai.com/codex/hooks): hooks live in `.codex/hooks.json` and `~/.codex/hooks.json`.
-- [Plugins](https://developers.openai.com/codex/plugins/) and [Build plugins](https://developers.openai.com/codex/plugins/build): Codex now has a first-party plugin system. The plugin browser exists in the app and CLI (`/plugins`). Plugins bundle skills, apps, and MCP servers. Plugin packages use a required `.codex-plugin/plugin.json` manifest and can also include `skills/`, `.app.json`, `.mcp.json`, and `assets/`. For local development and self-hosted catalogs, Codex documents repo and personal marketplaces at `.agents/plugins/marketplace.json` and `~/.agents/plugins/marketplace.json`, with plugin folders commonly stored under `./plugins/` or `~/.codex/plugins/`.
+- [Instructions](https://developers.openai.com/codex/guides/agents-md.md): Codex reads `AGENTS.md` and `AGENTS.override.md` from each directory between the project root and the current working directory, plus `~/.codex/AGENTS.md` and `~/.codex/AGENTS.override.md` at user scope. The fallback filename list is configurable in `~/.codex/config.toml` via `project_doc_fallback_filenames`.
+- [Skills](https://developers.openai.com/codex/skills.md): Codex scans `.agents/skills/` in each directory from the current working directory up to the repo root. User-level skills live in `~/.agents/skills/<name>/SKILL.md`, and the docs also call out the admin location `/etc/codex/skills`.
+- [Subagents](https://developers.openai.com/codex/subagents.md): Codex documents native subagent files under `.codex/agents/*.toml`. Current examples use required `name`, `description`, and `developer_instructions` fields, with optional model, reasoning, sandbox, MCP, and skill settings.
+- [Config and MCP](https://developers.openai.com/codex/config-reference.md): user-level config lives in `~/.codex/config.toml`; project overrides can live in `.codex/config.toml` and load only when the project is trusted. MCP servers are configured inside that TOML.
+- [Hooks](https://developers.openai.com/codex/hooks.md): Codex discovers `hooks.json` next to active config layers. The docs call out `~/.codex/hooks.json` and `<repo>/.codex/hooks.json` as the two most useful locations, and note that matching hook files are additive rather than replacing each other by precedence.
+- [Plugins](https://developers.openai.com/codex/plugins.md) and [Build plugins](https://developers.openai.com/codex/plugins/build.md): Codex has a first-party plugin system surfaced in the app and CLI (`/plugins`). Plugin packages use a required `.codex-plugin/plugin.json` manifest and can also include `skills/`, `.app.json`, `.mcp.json`, and `assets/`. For local development and curated catalogs, Codex documents repo marketplaces at `$REPO_ROOT/.agents/plugins/marketplace.json` and personal marketplaces at `~/.agents/plugins/marketplace.json`; the docs use `$REPO_ROOT/plugins/` and `~/.codex/plugins/` as examples, but `source.path` resolves relative to the marketplace root rather than to a fixed plugin directory.
 
 ### OpenCode
 
@@ -133,7 +133,7 @@ This section is about the current repo implementation, not upstream platform beh
 |----------|------------------------------------|---------------------------------------|
 | Cursor | `.cursor/rules/`, `.cursor/settings.json`, `.cursor/mcp.json`, `.cursor/hooks.json`, `.cursorignore`, `.claude/agents/` | Cursor-native agents would be `.cursor/agents/`, but both Go and bash implementations currently target `.claude/agents/` for compatibility reuse. The repo already manages `.cursorignore`, but not `.cursorindexingignore` or `.cursor/commands/`. |
 | Claude Code | `.claude/rules/`, `.claude/settings.local.json`, `.mcp.json`, `.claude/agents/`, `.claude/skills/`, `.agents/skills/` | Official Claude skills docs only mention `.claude/skills/`; this repo also mirrors project skills into `.agents/skills/` for shared-tool compatibility. |
-| Codex | `AGENTS.md`, `.codex/config.toml`, `.claude/agents/`, `.agents/skills/` | Codex-native subagents are documented under `.codex/agents/*.toml`, but both Go and bash implementations currently place project agents in `.claude/agents/`. |
+| Codex | `AGENTS.md`, `.codex/config.toml`, `.codex/agents/*.toml`, `.agents/skills/`, `.codex/hooks.json` | Go now renders native Codex agent TOML and `.codex/hooks.json`. Bash still lags on native Codex agent and hook output, and some non-Go import or explain paths still assume older Codex layouts. |
 | OpenCode | `opencode.json`, `.opencode/agent/`, `.agents/skills/` | OpenCode-native skills are documented under `.opencode/skills/`, but current Go and bash implementations rely on the `.agents/skills/` compatibility path instead. The repo does not currently manage `.opencode/plugins/`, `.opencode/package.json`, `.opencode/commands/`, `.opencode/tools/`, `.opencode/modes/`, or `.opencode/themes/`. |
 | GitHub Copilot | `.github/copilot-instructions.md`, `.github/agents/*.agent.md`, `.agents/skills/`, `.vscode/mcp.json`, `.claude/settings.local.json`, and Go-only `.github/hooks/*.json` | `.agents/skills/` and `.vscode/mcp.json` are officially documented Copilot CLI locations, but this repo still skips other official Copilot locations such as `.github/skills/`, `.claude/skills/`, `.github/mcp.json`, and `.mcp.json`. Bash also still lacks `.github/hooks/*.json` output. |
 
@@ -145,7 +145,7 @@ Validated from the current Go and bash implementations:
 |----------|------------------------|-------------------|---------------------|-------|
 | Claude Code | `.claude/settings*.json` | Yes | Yes | Both wire Claude-compatible hook settings, but the management commands still source from `~/.agents/settings/*/claude-code.json` or `~/.agents/hooks/*/claude-code.json`, not from native Claude files. |
 | Cursor | `.cursor/hooks.json` | Yes | No | Go wires `~/.agents/hooks/{scope}/cursor.json` to project and user `hooks.json`; bash has no Cursor hook creation path. |
-| Codex | `.codex/hooks.json` | No | No | Both implementations link `AGENTS.md`, `.codex/config.toml`, skills, and agents, but neither creates `.codex/hooks.json`. |
+| Codex | `.codex/hooks.json` | Yes | No | Go renders `.codex/hooks.json` from canonical hook bundles for repo and user scope and cleans stale rendered files. Bash still has no Codex hook output path. |
 | GitHub Copilot | `.github/hooks/*.json` and CLI current-working-directory hooks | Partial | Partial | Go links project `.github/hooks/*.json` and also wires Claude-compatible settings. Bash only wires Claude-compatible settings and does not create `.github/hooks/*.json`. |
 | OpenCode | No dedicated hook file documented | No | No | No OpenCode-specific hook handling is implemented here. |
 

@@ -12,6 +12,7 @@ Refresh the repo doc from the current vendor sources.
    - added or removed official surfaces
    - checked dates
 4. Keep "official vendor behavior" separate from "current repo implementation behavior."
+5. If you refreshed only part of a larger matrix, annotate that partial scope explicitly instead of implying that every platform was re-checked on the same date.
 
 ## Topic checklist
 
