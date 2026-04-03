@@ -34,9 +34,8 @@ ${BOLD}DESCRIPTION${NC}
     config is out of sync. Does not re-register projects or modify
     ~/.agents/ layout—only updates links in each project's tree.
 
-    Writes .agents-refresh in each project with the dot-agents git
-    commit (if available) and version that performed the refresh.
-    Adds .agents-refresh to the project's .gitignore if not already present.
+    Updates .agentsrc.json in each project with the dot-agents git
+    commit (if available), version, and refresh timestamp.
 
 ${BOLD}EXAMPLES${NC}
     dot-agents refresh                  # Refresh all managed projects
@@ -45,8 +44,6 @@ ${BOLD}EXAMPLES${NC}
 
 EOF
 }
-
-REFRESH_MARKER_BASENAME=".agents-refresh"
 
 # Check enabled platforms from config and refresh their detected versions.
 # Outputs enabled platform ids (one per line) to stdout.
@@ -113,21 +110,62 @@ refresh_project_links_enabled() {
   done
 }
 
-# Write .agents-refresh in project with commit/version that performed refresh
-write_refresh_marker() {
-  local project_path="$1"
-  local commit="${2:-}"
-  local describe="${3:-}"
-  local marker="$project_path/$REFRESH_MARKER_BASENAME"
+# Write refresh metadata into .agentsrc.json, creating a minimal manifest when
+# the project does not already have one.
+write_refresh_metadata() {
+  local project_name="$1"
+  local project_path="$2"
+  local commit="${3:-}"
+  local describe="${4:-}"
+  local manifest="$project_path/.agentsrc.json"
   local refreshed_at
   refreshed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || refreshed_at=$(date +"%Y-%m-%dT%H:%M:%S")
-  {
-    echo "# dot-agents refresh marker — do not edit"
-    echo "version=$DOT_AGENTS_VERSION"
-    [ -n "$commit" ] && echo "commit=$commit"
-    [ -n "$describe" ] && echo "describe=$describe"
-    echo "refreshed_at=$refreshed_at"
-  } > "$marker"
+  python3 - "$manifest" "$project_name" "$DOT_AGENTS_VERSION" "$commit" "$describe" "$refreshed_at" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+project_name = sys.argv[2]
+version = sys.argv[3]
+commit = sys.argv[4]
+describe = sys.argv[5]
+refreshed_at = sys.argv[6]
+
+if manifest_path.exists():
+    data = json.loads(manifest_path.read_text())
+else:
+    data = {
+        "version": 1,
+        "project": project_name,
+        "hooks": False,
+        "mcp": False,
+        "settings": False,
+        "sources": [{"type": "local"}],
+    }
+
+data.setdefault("version", 1)
+if project_name and not data.get("project"):
+    data["project"] = project_name
+data.setdefault("hooks", False)
+data.setdefault("mcp", False)
+data.setdefault("settings", False)
+if not data.get("sources"):
+    data["sources"] = [{"type": "local"}]
+
+refresh = {
+    "version": version,
+    "refreshedAt": refreshed_at,
+}
+if commit:
+    refresh["commit"] = commit
+if describe:
+    refresh["describe"] = describe
+data["refresh"] = refresh
+
+manifest_path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+  rm -f "$project_path/.agents-refresh"
 }
 
 cmd_refresh() {
@@ -245,6 +283,7 @@ cmd_refresh() {
     fi
     if [ "$DRY_RUN" != true ]; then
       create_project_dirs_silent "$name"
+      # Shared restore now includes plugin backups through the updated path map.
       local restored_count
       restored_count=$(restore_project_from_active_resources "$name")
       if [ "$restored_count" -gt 0 ]; then
@@ -253,9 +292,9 @@ cmd_refresh() {
     fi
     refresh_project_links_enabled "$name" "$path" "${enabled_platforms[@]}"
     if [ "$DRY_RUN" != true ]; then
-      write_refresh_marker "$path" "$refresh_commit" "$refresh_describe"
+      write_refresh_metadata "$name" "$path" "$refresh_commit" "$refresh_describe"
     else
-      [ -n "$refresh_commit" ] && log_dry "Write .agents-refresh (commit=$refresh_commit); add to .gitignore if needed" || log_dry "Write .agents-refresh (version=$DOT_AGENTS_VERSION); add to .gitignore if needed"
+      [ -n "$refresh_commit" ] && log_dry "Update .agentsrc.json refresh details (commit=$refresh_commit)" || log_dry "Update .agentsrc.json refresh details (version=$DOT_AGENTS_VERSION)"
     fi
     ((count++)) || true
   done <<< "$projects"

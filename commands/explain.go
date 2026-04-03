@@ -30,6 +30,8 @@ func runExplain(cmd *cobra.Command, args []string) error {
 		printPlatformsExplanation()
 	case "structure", "layout":
 		printStructureExplanation()
+	case "plugins", "plugin":
+		printPluginsExplanation()
 	case "manifest", "agentsrc", "install":
 		printManifestExplanation()
 	default:
@@ -74,6 +76,7 @@ func printOverviewExplanation() {
 	fmt.Fprintf(os.Stdout, "  %sdot-agents explain manifest%s    .agentsrc.json schema and workflow\n", ui.Dim, ui.Reset)
 	fmt.Fprintf(os.Stdout, "  %sdot-agents explain links%s       Link types (symlinks vs hard links)\n", ui.Dim, ui.Reset)
 	fmt.Fprintf(os.Stdout, "  %sdot-agents explain platforms%s   Supported AI platforms\n", ui.Dim, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  %sdot-agents explain plugins%s     Canonical plugin bundle layout\n", ui.Dim, ui.Reset)
 	fmt.Fprintf(os.Stdout, "  %sdot-agents explain structure%s   ~/.agents/ directory structure\n", ui.Dim, ui.Reset)
 	fmt.Fprintln(os.Stdout)
 }
@@ -186,6 +189,10 @@ func printStructureExplanation() {
 		{"  ├── ", "hooks/", ""},
 		{"  │   ├── ", "global/", "Global hook configs"},
 		{"  │   └── ", "{project}/", "Project-specific hook configs"},
+		{"  ├── ", "plugins/", ""},
+		{"  │   ├── ", "global/", "Global plugin bundles"},
+		{"  │   └── ", "{project}/", "Project-specific plugin bundles"},
+		{"  │       └── ", "{plugin}/", "Canonical bundle root with PLUGIN.yaml and emitted resources"},
 		{"  ├── ", "scripts/", "Helper scripts"},
 		{"  ├── ", "local/", "Machine-specific local files"},
 		{"  └── ", "resources/", "Backup files (auto-managed)"},
@@ -198,4 +205,48 @@ func printStructureExplanation() {
 		}
 	}
 	fmt.Fprintln(os.Stdout)
+}
+
+func printPluginsExplanation() {
+	ui.Header("Plugins")
+	fmt.Fprintf(os.Stdout, "  Plugins are stored canonically under %s~/.agents/plugins/%s and described by\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  a %sPLUGIN.yaml%s manifest. This keeps plugin authoring separate from any one\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  platform's native package or runtime layout.\n\n")
+
+	ui.Section("Canonical Layout")
+	lines := []struct{ indent, name, desc string }{
+		{"  ", "plugins/<scope>/<plugin-name>/", "Canonical plugin bundle root"},
+		{"  ├── ", "PLUGIN.yaml", "Canonical plugin manifest"},
+		{"  ├── ", "resources/", "Bundled agents, skills, commands, hooks, and MCP resources"},
+		{"  ├── ", "files/", "Plugin-owned scripts, assets, templates, or code"},
+		{"  └── ", "platforms/<platform>/", "Platform-specific overrides or passthrough files"},
+	}
+	for _, l := range lines {
+		fmt.Fprintf(os.Stdout, "%s%s%s%-28s%s%s%s\n", l.indent, ui.Cyan, ui.Bold, l.name, ui.Reset, ui.Dim+l.desc, ui.Reset)
+	}
+	fmt.Fprintln(os.Stdout)
+
+	ui.Section("Plugin Kinds")
+	fmt.Fprintf(os.Stdout, "  %snative%s   Runtime-oriented plugin bundles such as OpenCode plugins\n", ui.Cyan, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  %spackage%s  Package-style bundles for Claude, Cursor, Codex, and Copilot\n", ui.Cyan, ui.Reset)
+	fmt.Fprintln(os.Stdout)
+
+	ui.Section("Current Support")
+	fmt.Fprintf(os.Stdout, "  Package emitters exist for Claude, Cursor, Codex, and Copilot.\n")
+	fmt.Fprintf(os.Stdout, "  OpenCode native plugin trees emit to %s.opencode/plugins/%s.\n\n", ui.Bold, ui.Reset)
+
+	ui.Section("Marketplaces")
+	fmt.Fprintf(os.Stdout, "  Marketplace manifests are generated from %sPLUGIN.yaml%s metadata instead of\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  using a separate canonical bucket.\n")
+	fmt.Fprintf(os.Stdout, "  Current generated targets:\n")
+	fmt.Fprintf(os.Stdout, "    %s.claude-plugin/marketplace.json%s\n", ui.Dim, ui.Reset)
+	fmt.Fprintf(os.Stdout, "    %s.cursor-plugin/marketplace.json%s\n", ui.Dim, ui.Reset)
+	fmt.Fprintf(os.Stdout, "    %s.agents/plugins/marketplace.json%s\n", ui.Dim, ui.Reset)
+	fmt.Fprintf(os.Stdout, "    %s.github/plugin/marketplace.json%s\n\n", ui.Dim, ui.Reset)
+
+	ui.Section("Command Behavior")
+	fmt.Fprintf(os.Stdout, "  %srefresh%s re-emits canonical plugin bundles already owned by dot-agents.\n", ui.Cyan, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  %simport%s adopts representable native package layouts conservatively and keeps\n", ui.Cyan, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  ambiguous vendor-only shapes out of %sPLUGIN.yaml%s guessing.\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(os.Stdout, "  %sstatus%s and %sdoctor%s surface plugin bundle health and emitted package roots.\n\n", ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 }

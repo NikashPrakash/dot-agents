@@ -1,0 +1,3 @@
+- [x] Add refresh metadata support to `.agentsrc.json`
+- [x] Update refresh/install/status flows to use manifest refresh metadata
+- [x] Add focused tests and run targeted verification

@@ -9,7 +9,7 @@ if ! declare -F create_project_dirs_silent >/dev/null 2>&1; then
   source "$_INSTALL_DIR/add.sh"
 fi
 # shellcheck source=refresh.sh
-if ! declare -F write_refresh_marker >/dev/null 2>&1; then
+if ! declare -F write_refresh_metadata >/dev/null 2>&1; then
   source "$_INSTALL_DIR/refresh.sh"
 fi
 
@@ -233,7 +233,7 @@ install_run() {
     fi
   done < <(platform_ids)
 
-  # 9. Write .agents-refresh marker
+  # 9. Update .agentsrc.json refresh details
   if [[ "$DRY_RUN" != true ]]; then
     local refresh_commit="" refresh_describe=""
     local repo_root
@@ -242,8 +242,8 @@ install_run() {
       refresh_commit=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null) || true
       [[ -n "$refresh_commit" ]] && refresh_describe=$(git -C "$repo_root" describe --always --tags 2>/dev/null) || true
     fi
-    write_refresh_marker "$project_path" "$refresh_commit" "$refresh_describe"
-    bullet "ok" "Wrote .agents-refresh marker"
+    write_refresh_metadata "$project_name" "$project_path" "$refresh_commit" "$refresh_describe"
+    bullet "ok" "Updated .agentsrc.json refresh details"
   fi
 
   success_with_next_steps "Project '$project_name' installed successfully!" \

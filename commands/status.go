@@ -154,6 +154,7 @@ func runStatus(audit bool, agentFilter string) error {
 			filepath.Join(path, statusCursorDir, statusHooksJSON),
 			filepath.Join(path, ".cursorignore"),
 		}, nil)
+		cursorOK += countManagedTreeEntries(filepath.Join(path, ".cursor-plugin"), &cursorWarn)
 		healthOK += cursorOK
 		healthWarn += cursorWarn
 		badges = append(badges, platformBadge{"Cursor", cursorOK > 0, cursorWarn > 0})
@@ -180,6 +181,7 @@ func runStatus(audit bool, agentFilter string) error {
 			filepath.Join(path, statusClaudeDir, "agents"),
 			filepath.Join(path, statusClaudeDir, "skills"),
 		})
+		claudeOK += countManagedTreeEntries(filepath.Join(path, ".claude-plugin"), &claudeWarn)
 		healthOK += claudeOK
 		healthWarn += claudeWarn
 		badges = append(badges, platformBadge{"Claude", claudeOK > 0, claudeWarn > 0})
@@ -195,6 +197,8 @@ func runStatus(audit bool, agentFilter string) error {
 			filepath.Join(path, statusCodexDir, "agents"),
 			filepath.Join(path, statusAgentsDir, "skills"),
 		})
+		codexOK += countManagedTreeEntries(filepath.Join(path, ".codex-plugin"), &codexWarn)
+		codexOK += countManagedTreeEntries(filepath.Join(path, statusAgentsDir, "plugins"), &codexWarn)
 		healthOK += codexOK
 		healthWarn += codexWarn
 		badges = append(badges, platformBadge{"Codex", codexOK > 0, codexWarn > 0})
@@ -207,6 +211,7 @@ func runStatus(audit bool, agentFilter string) error {
 			filepath.Join(path, statusOpenCodeDir, "agent"),
 			filepath.Join(path, statusAgentsDir, "skills"),
 		})
+		opencodeOK += countManagedTreeEntries(filepath.Join(path, statusOpenCodeDir, "plugins"), &opencodeWarn)
 		healthOK += opencodeOK
 		healthWarn += opencodeWarn
 		badges = append(badges, platformBadge{"OpenCode", opencodeOK > 0, opencodeWarn > 0})
@@ -222,6 +227,8 @@ func runStatus(audit bool, agentFilter string) error {
 			filepath.Join(path, statusGitHubDir, "hooks"),
 			filepath.Join(path, statusAgentsDir, "skills"),
 		})
+		copilotOK += countManagedFileOK(filepath.Join(path, "plugin.json"), &copilotWarn)
+		copilotOK += countManagedTreeEntries(filepath.Join(path, statusGitHubDir, "plugin"), &copilotWarn)
 		healthOK += copilotOK
 		healthWarn += copilotWarn
 		badges = append(badges, platformBadge{"Copilot", copilotOK > 0, copilotWarn > 0})
@@ -300,6 +307,7 @@ func printCanonicalStoreSection(agentsHome string) {
 		{name: "skills", path: filepath.Join(agentsHome, "skills"), countDirs: true, markerFile: "SKILL.md"},
 		{name: "agents", path: filepath.Join(agentsHome, "agents"), countDirs: true, markerFile: "AGENT.md"},
 		{name: "hooks", path: filepath.Join(agentsHome, "hooks")},
+		{name: "plugins", path: filepath.Join(agentsHome, "plugins"), countDirs: true, markerFile: "PLUGIN.yaml"},
 	}
 
 	for _, bucket := range buckets {
@@ -426,6 +434,24 @@ func countManagedDirEntries(dir string, warn *int) int {
 	return ok
 }
 
+func countManagedTreeEntries(root string, warn *int) int {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+
+	ok := 0
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if entry.IsDir() {
+			ok += countManagedTreeEntries(path, warn)
+			continue
+		}
+		ok += countManagedFileOK(path, warn)
+	}
+	return ok
+}
+
 func printManagedAuditPath(path string, rel func(string) string) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -474,8 +500,27 @@ func printBadgeRow(badges []platformBadge) {
 	fmt.Fprintln(os.Stdout)
 }
 
-// readRefreshTimestamp reads the refreshed_at field from .agents-refresh
+// readRefreshTimestamp reads refresh metadata from .agentsrc.json and falls back
+// to the legacy .agents-refresh marker while older repos migrate forward.
 func readRefreshTimestamp(projectPath string) string {
+	if rc, err := config.LoadAgentsRC(projectPath); err == nil && rc.Refresh != nil && rc.Refresh.RefreshedAt != "" {
+		return formatRefreshTimestamp(rc.Refresh.RefreshedAt)
+	}
+
+	return readLegacyRefreshTimestamp(projectPath)
+}
+
+func formatRefreshTimestamp(ts string) string {
+	// Simplify ISO timestamp: 2026-03-12T05:18:11Z → 2026-03-12 05:18 UTC
+	ts = strings.Replace(ts, "T", " ", 1)
+	ts = strings.TrimSuffix(ts, "Z")
+	if len(ts) >= 16 {
+		ts = ts[:16] + " UTC"
+	}
+	return ts
+}
+
+func readLegacyRefreshTimestamp(projectPath string) string {
 	markerPath := filepath.Join(projectPath, ".agents-refresh")
 	f, err := os.Open(markerPath)
 	if err != nil {
@@ -486,14 +531,7 @@ func readRefreshTimestamp(projectPath string) string {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "refreshed_at=") {
-			ts := strings.TrimPrefix(line, "refreshed_at=")
-			// Simplify ISO timestamp: 2026-03-12T05:18:11Z → 2026-03-12 05:18 UTC
-			ts = strings.Replace(ts, "T", " ", 1)
-			ts = strings.TrimSuffix(ts, "Z")
-			if len(ts) >= 16 {
-				ts = ts[:16] + " UTC"
-			}
-			return ts
+			return formatRefreshTimestamp(strings.TrimPrefix(line, "refreshed_at="))
 		}
 	}
 	return ""
@@ -587,6 +625,7 @@ func printUserConfigSection(agentsHome string, audit bool, agentFilter string) {
 		opencodeOK, opencodeWarn := 0, 0
 		opencodeAgentDir := filepath.Join(homeDir, statusOpenCodeDir, "agent")
 		addManagedCounts(&opencodeOK, &opencodeWarn, nil, []string{opencodeAgentDir})
+		opencodeOK += countManagedTreeEntries(filepath.Join(homeDir, ".config", "opencode", "plugins"), &opencodeWarn)
 		if opencodeOK+opencodeWarn > 0 {
 			badges = append(badges, platformBadge{"OpenCode", opencodeOK > 0, opencodeWarn > 0})
 		}
@@ -596,6 +635,7 @@ func printUserConfigSection(agentsHome string, audit bool, agentFilter string) {
 			rel := func(p string) string { return strings.TrimPrefix(p, displayBase) }
 
 			printManagedAuditDir(opencodeAgentDir, rel)
+			printManagedAuditTree(filepath.Join(homeDir, ".config", "opencode", "plugins"), rel)
 		}
 	}
 
@@ -616,6 +656,14 @@ func printCursorAudit(name, path, agentsHome string) {
 	entries, err := os.ReadDir(rulesDir)
 	if err != nil {
 		fmt.Fprintf(os.Stdout, "      %s(no .cursor/rules/)%s\n", ui.Dim, ui.Reset)
+		printManagedAuditTree(filepath.Join(path, ".cursor-plugin"), func(p string) string {
+			rel, err := filepath.Rel(path, p)
+			if err != nil {
+				return p
+			}
+			return filepath.ToSlash(rel)
+		})
+		fmt.Fprintln(os.Stdout)
 		return
 	}
 	count := 0
@@ -670,15 +718,30 @@ func printCursorAudit(name, path, agentsHome string) {
 	} else {
 		fmt.Fprintf(os.Stdout, "      %s-%s .cursor/mcp.json %s(not linked)%s\n", ui.Dim, ui.Reset, ui.Dim, ui.Reset)
 	}
+	printManagedAuditTree(filepath.Join(path, ".cursor-plugin"), func(p string) string {
+		rel, err := filepath.Rel(path, p)
+		if err != nil {
+			return p
+		}
+		return filepath.ToSlash(rel)
+	})
 	fmt.Fprintln(os.Stdout)
 }
 
 func printClaudeAudit(name, path, agentsHome string) {
 	fmt.Fprintf(os.Stdout, "    %sClaude Code%s\n", ui.Cyan, ui.Reset)
+	rel := func(p string) string {
+		r, err := filepath.Rel(path, p)
+		if err != nil {
+			return p
+		}
+		return filepath.ToSlash(r)
+	}
 	rulesDir := filepath.Join(path, statusClaudeDir, "rules")
 	entries, err := os.ReadDir(rulesDir)
 	if err != nil {
 		fmt.Fprintf(os.Stdout, "      %s(no %s/rules/)%s\n", ui.Dim, statusClaudeDir, ui.Reset)
+		printManagedAuditTree(filepath.Join(path, ".claude-plugin"), rel)
 		fmt.Fprintln(os.Stdout)
 		return
 	}
@@ -713,6 +776,7 @@ func printClaudeAudit(name, path, agentsHome string) {
 	} else {
 		fmt.Fprintf(os.Stdout, "      %s-%s .mcp.json %s(not linked)%s\n", ui.Dim, ui.Reset, ui.Dim, ui.Reset)
 	}
+	printManagedAuditTree(filepath.Join(path, ".claude-plugin"), rel)
 	fmt.Fprintln(os.Stdout)
 }
 
@@ -723,6 +787,15 @@ func printCodexAudit(name, path, agentsHome string) {
 	printCodexSymlinkAudit(filepath.Join(path, statusCodexDir, statusHooksJSON), ".codex/hooks.json")
 	printCodexSkillsAudit(filepath.Join(path, statusAgentsDir, "skills"))
 	printCodexAgentsAudit(filepath.Join(path, statusCodexDir, "agents"))
+	rel := func(p string) string {
+		r, err := filepath.Rel(path, p)
+		if err != nil {
+			return p
+		}
+		return filepath.ToSlash(r)
+	}
+	printManagedAuditTree(filepath.Join(path, ".codex-plugin"), rel)
+	printManagedAuditTree(filepath.Join(path, statusAgentsDir, "plugins"), rel)
 	fmt.Fprintln(os.Stdout)
 }
 
@@ -844,11 +917,35 @@ func printOpenCodeAudit(name, path, agentsHome string) {
 	} else {
 		fmt.Fprintf(os.Stdout, "      %s(no .opencode/)%s\n", ui.Dim, ui.Reset)
 	}
+	printManagedAuditTree(filepath.Join(path, statusOpenCodeDir, "plugins"), func(p string) string {
+		rel, err := filepath.Rel(path, p)
+		if err != nil {
+			return p
+		}
+		return filepath.ToSlash(rel)
+	})
 	fmt.Fprintln(os.Stdout)
+}
+
+func printManagedAuditTree(root string, rel func(string) string) {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		printManagedAuditPath(path, rel)
+		return nil
+	})
 }
 
 func printCopilotAudit(name, path string) {
 	fmt.Fprintf(os.Stdout, "    %sGitHub Copilot%s\n", ui.Cyan, ui.Reset)
+	rel := func(p string) string {
+		r, err := filepath.Rel(path, p)
+		if err != nil {
+			return p
+		}
+		return filepath.ToSlash(r)
+	}
 	instructionsPath := filepath.Join(path, statusGitHubDir, statusCopilotInstructions)
 	if info, err := os.Lstat(instructionsPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -875,5 +972,7 @@ func printCopilotAudit(name, path string) {
 	} else {
 		fmt.Fprintf(os.Stdout, "      %s-%s .vscode/mcp.json %s(not linked)%s\n", ui.Dim, ui.Reset, ui.Dim, ui.Reset)
 	}
+	printManagedAuditPath(filepath.Join(path, "plugin.json"), rel)
+	printManagedAuditTree(filepath.Join(path, statusGitHubDir, "plugin"), rel)
 	fmt.Fprintln(os.Stdout)
 }

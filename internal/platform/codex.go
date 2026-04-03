@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -15,9 +16,9 @@ import (
 type codex struct{}
 
 const (
-	codexAgentsDir = ".agents"
-	codexDir = ".codex"
-	codexHooksJSON = "hooks.json"
+	codexAgentsDir      = ".agents"
+	codexDir            = ".codex"
+	codexHooksJSON      = "hooks.json"
 	codexAgentsMarkdown = "AGENTS.md"
 )
 
@@ -92,6 +93,10 @@ func (c *codex) CreateLinks(project, repoPath string) error {
 		return err
 	}
 
+	if err := c.createPackagePluginLinks(project, repoPath, agentsHome); err != nil {
+		return err
+	}
+
 	// Project hooks → .codex/hooks.json
 	if err := c.createHooksLinks(project, repoPath, agentsHome); err != nil {
 		return err
@@ -137,6 +142,232 @@ func (c *codex) createAgentsLinks(project, repoPath, agentsHome string) error {
 
 func (c *codex) createSkillsLinks(project, repoPath, agentsHome string) error {
 	return syncScopedDirSymlinksTargets(agentsHome, "skills", project, "SKILL.md", filepath.Join(repoPath, codexAgentsDir, "skills"))
+}
+
+func (c *codex) createPackagePluginLinks(project, repoPath, agentsHome string) error {
+	spec, _, err := selectedPackagePluginForPlatform(agentsHome, project, c.ID())
+	if err != nil {
+		return err
+	}
+	if spec == nil {
+		return c.removeManagedPackagePlugin(repoPath, agentsHome)
+	}
+
+	skillsSrc := pluginResourcesDir(*spec, "skills")
+	rootSources := existingPluginSourceRoots(pluginFilesDir(*spec), pluginPlatformDir(*spec, c.ID()))
+	if len(rootSources) == 0 {
+		if err := c.removeManagedPackagePlugin(repoPath, agentsHome); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(skillsSrc); err == nil {
+		if err := syncPluginOverlayTree(filepath.Join(repoPath, "skills"), skillsSrc); err != nil {
+			return err
+		}
+	} else {
+		if err := removeManagedPluginOverlayTree(filepath.Join(repoPath, "skills"), agentsHome); err != nil {
+			return err
+		}
+	}
+	if len(rootSources) > 0 {
+		if err := syncCodexPackageRootTree(repoPath, agentsHome, rootSources...); err != nil {
+			return err
+		}
+	}
+	if err := c.writeCodexPluginManifest(repoPath, *spec); err != nil {
+		return err
+	}
+	return c.writeCodexPluginMarketplace(repoPath, *spec)
+}
+
+func (c *codex) removeManagedPackagePlugin(repoPath, agentsHome string) error {
+	if err := removeManagedPluginOverlayTree(repoPath, filepath.Join(agentsHome, "plugins")); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(repoPath, ".codex-plugin", "plugin.json")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Remove(filepath.Join(repoPath, ".agents", "plugins", "marketplace.json")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = removeDirIfEmpty(filepath.Join(repoPath, ".agents", "plugins"))
+	_ = removeDirIfEmpty(filepath.Join(repoPath, ".agents"))
+	return removeDirIfEmpty(filepath.Join(repoPath, ".codex-plugin"))
+}
+
+type codexPluginManifest struct {
+	Name        string                `json:"name"`
+	Version     string                `json:"version,omitempty"`
+	Description string                `json:"description,omitempty"`
+	Repository  string                `json:"repository,omitempty"`
+	License     string                `json:"license,omitempty"`
+	Keywords    []string              `json:"keywords,omitempty"`
+	Skills      string                `json:"skills,omitempty"`
+	Hooks       string                `json:"hooks,omitempty"`
+	MCPServers  string                `json:"mcpServers,omitempty"`
+	Apps        string                `json:"apps,omitempty"`
+	Interface   *codexPluginInterface `json:"interface,omitempty"`
+}
+
+type codexPluginInterface struct {
+	DisplayName      string `json:"displayName,omitempty"`
+	ShortDescription string `json:"shortDescription,omitempty"`
+	LongDescription  string `json:"longDescription,omitempty"`
+	DeveloperName    string `json:"developerName,omitempty"`
+}
+
+func (c *codex) writeCodexPluginManifest(repoPath string, spec PluginSpec) error {
+	manifest := codexPluginManifest{
+		Name:        spec.Name,
+		Version:     spec.Version,
+		Description: spec.Description,
+		Repository:  spec.Marketplace.Repo,
+		License:     spec.License,
+		Keywords:    append([]string(nil), spec.Marketplace.Tags...),
+	}
+	if display := strings.TrimSpace(spec.DisplayName); display != "" || strings.TrimSpace(spec.Description) != "" {
+		if display == "" {
+			display = spec.Name
+		}
+		manifest.Interface = &codexPluginInterface{
+			DisplayName:      display,
+			ShortDescription: spec.Description,
+			LongDescription:  spec.Description,
+		}
+	}
+	if len(spec.Authors) > 0 {
+		manifest.Interface = ensureCodexPluginInterface(manifest.Interface)
+		manifest.Interface.DeveloperName = strings.Join(spec.Authors, ", ")
+	}
+
+	if pathExists(filepath.Join(repoPath, "skills")) {
+		manifest.Skills = "./skills/"
+	}
+	if pathExists(filepath.Join(repoPath, "hooks.json")) {
+		manifest.Hooks = "./hooks.json"
+	}
+	if pathExists(filepath.Join(repoPath, ".mcp.json")) {
+		manifest.MCPServers = "./.mcp.json"
+	}
+	if pathExists(filepath.Join(repoPath, ".app.json")) {
+		manifest.Apps = "./.app.json"
+	}
+
+	data, err := marshalJSON(manifest)
+	if err != nil {
+		return err
+	}
+	manifestPath := filepath.Join(repoPath, ".codex-plugin", "plugin.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err != nil {
+		return err
+	}
+	return writeManagedFile(manifestPath, data)
+}
+
+func (c *codex) writeCodexPluginMarketplace(repoPath string, spec PluginSpec) error {
+	if !shouldRenderPluginMarketplace(spec, c.ID()) {
+		return nil
+	}
+	content, err := renderCodexMarketplace(spec)
+	if err != nil {
+		return err
+	}
+	return writeManagedFile(filepath.Join(repoPath, ".agents", "plugins", "marketplace.json"), content)
+}
+
+func syncCodexPackageRootTree(repoPath, agentsHome string, srcRoots ...string) error {
+	desired, err := collectPluginOverlayFiles(srcRoots...)
+	if err != nil {
+		return err
+	}
+	if len(desired) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(repoPath, 0755); err != nil {
+		return err
+	}
+
+	rels := make([]string, 0, len(desired))
+	for rel := range desired {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+	for _, rel := range rels {
+		if err := links.Symlink(desired[rel], filepath.Join(repoPath, rel)); err != nil {
+			return err
+		}
+	}
+	return pruneCodexPackageRootTree(repoPath, agentsHome, desired)
+}
+
+func pruneCodexPackageRootTree(repoPath, agentsHome string, desired map[string]string) error {
+	info, err := os.Stat(repoPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+
+	skip := map[string]bool{
+		"skills":        true,
+		".codex-plugin": true,
+	}
+	prefix := filepath.Join(agentsHome, "plugins")
+	if err := filepath.WalkDir(repoPath, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if path == repoPath {
+			return nil
+		}
+
+		rel, err := filepath.Rel(repoPath, path)
+		if err != nil {
+			return err
+		}
+		first := rel
+		if idx := strings.IndexRune(rel, filepath.Separator); idx >= 0 {
+			first = rel[:idx]
+		}
+		if d.IsDir() {
+			if skip[first] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if want, ok := desired[rel]; ok && links.IsSymlinkTo(path, want) {
+			return nil
+		}
+		if links.IsSymlinkUnder(path, prefix) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return pruneEmptyDirsBottomUp(repoPath)
+}
+
+func ensureCodexPluginInterface(iface *codexPluginInterface) *codexPluginInterface {
+	if iface != nil {
+		return iface
+	}
+	return &codexPluginInterface{}
+}
+
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 func (c *codex) createHooksLinks(project, repoPath, agentsHome string) error {
@@ -199,6 +430,8 @@ func (c *codex) RemoveLinks(project, repoPath string) error {
 			links.RemoveIfSymlinkUnder(filepath.Join(skillsDir, e.Name()), agentsHome)
 		}
 	}
+
+	_ = c.removeManagedPackagePlugin(repoPath, agentsHome)
 
 	return nil
 }
@@ -281,7 +514,8 @@ func renderCodexAgentToml(agentMD string) ([]byte, error) {
 		fmt.Fprintf(&b, "is_background = %s\n", background)
 	}
 	if strings.TrimSpace(body) != "" {
-		b.WriteString("instructions = ")
+		// Codex custom agent files require developer_instructions for agent behavior.
+		b.WriteString("developer_instructions = ")
 		b.WriteString(tomlMultilineString(body))
 		b.WriteString("\n")
 	}

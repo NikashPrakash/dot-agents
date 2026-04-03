@@ -70,7 +70,10 @@ func (c *claude) CreateLinks(project, repoPath string) error {
 		return err
 	}
 
-	return c.createSkillsLinks(project, repoPath, agentsHome)
+	if err := c.createSkillsLinks(project, repoPath, agentsHome); err != nil {
+		return err
+	}
+	return c.createPackagePluginLinks(project, repoPath, agentsHome)
 }
 
 func (c *claude) prepareLinks(repoPath, agentsHome string) error {
@@ -267,6 +270,78 @@ func (c *claude) createSkillsLinks(project, repoPath, agentsHome string) error {
 	)
 }
 
+func (c *claude) createPackagePluginLinks(project, repoPath, agentsHome string) error {
+	specs, _, err := preferredPackagePluginsForPlatform(agentsHome, project, c.ID())
+	if err != nil {
+		return err
+	}
+
+	root := filepath.Join(repoPath, ".claude-plugin")
+	if len(specs) != 1 {
+		return c.removePackagePluginLinks(root, agentsHome)
+	}
+
+	spec := specs[0]
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(root, pluginFilesDir(spec), pluginPlatformDir(spec, c.ID())); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "commands"), pluginResourcesDir(spec, "commands")); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "agents"), pluginResourcesDir(spec, "agents")); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "skills"), pluginResourcesDir(spec, "skills")); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "hooks"), pluginResourcesDir(spec, "hooks")); err != nil {
+		return err
+	}
+	if err := claudePluginSyncNamedFile(filepath.Join(root, ".mcp.json"), claudePluginFindSourceFile(spec, ".mcp.json")); err != nil {
+		return err
+	}
+	if err := c.emitPackagePluginManifest(root, spec); err != nil {
+		return err
+	}
+	return c.emitPackagePluginMarketplace(root, spec)
+}
+
+func (c *claude) emitPackagePluginManifest(root string, spec PluginSpec) error {
+	content, err := renderClaudePackagePluginManifest(spec)
+	if err != nil {
+		return err
+	}
+	return writeManagedFile(filepath.Join(root, "plugin.json"), content)
+}
+
+func (c *claude) emitPackagePluginMarketplace(root string, spec PluginSpec) error {
+	if !shouldRenderPluginMarketplace(spec, c.ID()) {
+		return nil
+	}
+	content, err := renderClaudeMarketplace(spec)
+	if err != nil {
+		return err
+	}
+	return writeManagedFile(filepath.Join(root, "marketplace.json"), content)
+}
+
+func (c *claude) removePackagePluginLinks(root, agentsHome string) error {
+	_ = os.Remove(filepath.Join(root, "plugin.json"))
+	_ = os.Remove(filepath.Join(root, "marketplace.json"))
+	prefix := filepath.Join(agentsHome, "plugins")
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "commands"), prefix)
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "agents"), prefix)
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "skills"), prefix)
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "hooks"), prefix)
+	_ = os.Remove(filepath.Join(root, ".mcp.json"))
+	_ = removeManagedPluginOverlayTree(root, prefix)
+	_ = pruneEmptyDirsBottomUp(root)
+	return nil
+}
+
 func (c *claude) RemoveLinks(project, repoPath string) error {
 	agentsHome := config.AgentsHome()
 
@@ -276,6 +351,7 @@ func (c *claude) RemoveLinks(project, repoPath string) error {
 	c.removeScopedDirLinks(filepath.Join(repoPath, claudeDir, "agents"), agentsHome)
 	c.removeScopedDirLinks(filepath.Join(repoPath, claudeDir, "skills"), agentsHome)
 	c.removeScopedDirLinks(filepath.Join(repoPath, ".agents", "skills"), agentsHome)
+	_ = c.removePackagePluginLinks(filepath.Join(repoPath, ".claude-plugin"), agentsHome)
 	return nil
 }
 
@@ -324,4 +400,82 @@ func isClaudeAgentDir(path string) bool {
 func isSymlink(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
+type claudePackagePluginManifest struct {
+	Name        string        `json:"name"`
+	Version     string        `json:"version,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Author      *pluginAuthor `json:"author,omitempty"`
+	Homepage    string        `json:"homepage,omitempty"`
+	Repository  string        `json:"repository,omitempty"`
+	License     string        `json:"license,omitempty"`
+	Keywords    []string      `json:"keywords,omitempty"`
+	Commands    string        `json:"commands,omitempty"`
+	Agents      string        `json:"agents,omitempty"`
+	Skills      string        `json:"skills,omitempty"`
+	Hooks       string        `json:"hooks,omitempty"`
+	MCPServers  string        `json:"mcpServers,omitempty"`
+}
+
+func renderClaudePackagePluginManifest(spec PluginSpec) ([]byte, error) {
+	manifest := claudePackagePluginManifest{
+		Name:        spec.Name,
+		Version:     spec.Version,
+		Description: spec.Description,
+		Author:      pluginAuthorFromSpec(spec),
+		Homepage:    spec.Homepage,
+		Repository:  spec.Marketplace.Repo,
+		License:     spec.License,
+		Keywords:    append([]string(nil), spec.Marketplace.Tags...),
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "commands")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "claude"), "commands")) {
+		manifest.Commands = "./commands/"
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "agents")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "claude"), "agents")) {
+		manifest.Agents = "./agents/"
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "skills")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "claude"), "skills")) {
+		manifest.Skills = "./skills/"
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "hooks")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "claude"), "hooks")) {
+		manifest.Hooks = "./hooks/hooks.json"
+	}
+	if claudePluginFindSourceFile(spec, ".mcp.json", "mcp.json") != "" {
+		manifest.MCPServers = "./.mcp.json"
+	}
+	return marshalJSON(manifest)
+}
+
+func claudePluginFindSourceFile(spec PluginSpec, names ...string) string {
+	for _, dir := range []string{
+		pluginResourcesDir(spec, "mcp"),
+		pluginPlatformDir(spec, "claude"),
+	} {
+		for _, name := range names {
+			src := filepath.Join(dir, name)
+			if info, err := os.Stat(src); err == nil && !info.IsDir() {
+				return src
+			}
+		}
+	}
+	return ""
+}
+
+func claudePluginSyncNamedFile(dst string, src string) error {
+	if src == "" {
+		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		if err := os.Remove(dst); err != nil {
+			return err
+		}
+	}
+	return os.Symlink(src, dst)
 }

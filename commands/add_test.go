@@ -226,3 +226,64 @@ func TestCheckExistingConfigFiles_IdempotentAfterAdd(t *testing.T) {
 		t.Errorf("second add should find nothing to back up, got: %v", found)
 	}
 }
+
+func TestCreateProjectDirsIncludesPluginsBucket(t *testing.T) {
+	tmp := t.TempDir()
+	agentsHome := filepath.Join(tmp, ".agents")
+	t.Setenv("AGENTS_HOME", agentsHome)
+
+	if err := createProjectDirs("proj"); err != nil {
+		t.Fatalf("createProjectDirs failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(agentsHome, "plugins", "proj")); err != nil {
+		t.Fatalf("expected plugin project dir to exist: %v", err)
+	}
+}
+
+func TestScanExistingAIConfigsIncludesPluginRoots(t *testing.T) {
+	tmp := t.TempDir()
+	projectPath := filepath.Join(tmp, "repo")
+
+	mustMkdirAll(t, filepath.Join(projectPath, ".claude-plugin"))
+	mustWriteFile(t, filepath.Join(projectPath, ".claude-plugin", "plugin.json"), "{}\n")
+	mustMkdirAll(t, filepath.Join(projectPath, ".opencode", "plugins", "native-one"))
+	mustWriteFile(t, filepath.Join(projectPath, ".opencode", "plugins", "native-one", "PLUGIN.yaml"), "kind: native\nname: native-one\nplatforms:\n  - opencode\n")
+	mustWriteFile(t, filepath.Join(projectPath, "plugin.json"), "{}\n")
+
+	got := scanExistingAIConfigs(projectPath)
+	want := []string{
+		filepath.Join(projectPath, ".claude-plugin"),
+		filepath.Join(projectPath, ".claude-plugin", "plugin.json"),
+		filepath.Join(projectPath, ".opencode", "plugins", "native-one"),
+		filepath.Join(projectPath, "plugin.json"),
+	}
+	for _, path := range want {
+		if !containsPath(got, path) {
+			t.Fatalf("scanExistingAIConfigs missing %s in %v", path, got)
+		}
+	}
+}
+
+func mustMkdirAll(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWriteFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
+}

@@ -1,9 +1,12 @@
 package platform
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/NikashPrakash/dot-agents/internal/config"
@@ -16,9 +19,9 @@ const (
 	copilotMCPJSON           = "mcp.json"
 	copilotClaudeDir         = ".claude"
 	copilotSettingsLocalJSON = "settings.local.json"
-	copilotInstructionsMD = "copilot-instructions.md"
-	copilotGitHubDir = ".github"
-	copilotVSCodeDir = ".vscode"
+	copilotInstructionsMD    = "copilot-instructions.md"
+	copilotGitHubDir         = ".github"
+	copilotVSCodeDir         = ".vscode"
 )
 
 func NewCopilot() Platform { return &copilot{} }
@@ -106,6 +109,10 @@ func (c *copilot) CreateLinks(project, repoPath string) error {
 
 	// .github/hooks/{name}.json
 	if err := c.createProjectHookFiles(project, repoPath, agentsHome); err != nil {
+		return err
+	}
+
+	if err := c.createPackagePluginLinks(project, repoPath, agentsHome); err != nil {
 		return err
 	}
 
@@ -290,6 +297,7 @@ func (c *copilot) RemoveLinks(project, repoPath string) error {
 	c.removeSkillsLinks(repoPath, agentsHome)
 	c.removeAgentLinks(repoPath, agentsHome)
 	c.removeHookLinks(project, repoPath, agentsHome)
+	c.removePackagePluginLinks(project, repoPath, agentsHome)
 	return nil
 }
 
@@ -344,4 +352,333 @@ func (c *copilot) removeHookLinks(project, repoPath, agentsHome string) {
 			}
 		}
 	}
+}
+
+func (c *copilot) createPackagePluginLinks(project, repoPath, agentsHome string) error {
+	spec, err := c.selectPackagePluginSpec(agentsHome, project)
+	if err != nil {
+		return err
+	}
+	if spec == nil {
+		if err := c.removePackagePluginOutputs(repoPath, agentsHome); err != nil {
+			return err
+		}
+		_ = os.Remove(filepath.Join(repoPath, "plugin.json"))
+		_ = os.Remove(filepath.Join(repoPath, ".github", "plugin", "marketplace.json"))
+		return nil
+	}
+
+	if err := c.removePackagePluginOutputs(repoPath, agentsHome); err != nil {
+		return err
+	}
+
+	if err := c.syncPackagePluginTree(filepath.Join(repoPath, "agents"), filepath.Join(spec.Dir, "resources", "agents")); err != nil {
+		return err
+	}
+	if err := c.syncPackagePluginTree(filepath.Join(repoPath, "skills"), filepath.Join(spec.Dir, "resources", "skills")); err != nil {
+		return err
+	}
+	if err := c.syncPackagePluginTree(filepath.Join(repoPath, "commands"), filepath.Join(spec.Dir, "resources", "commands")); err != nil {
+		return err
+	}
+	if err := c.syncPackagePluginTree(repoPath, filepath.Join(spec.Dir, "files"), filepath.Join(spec.Dir, "platforms", c.ID())); err != nil {
+		return err
+	}
+
+	manifest, err := c.renderPackagePluginManifest(repoPath, spec)
+	if err != nil {
+		return err
+	}
+	if err := writeManagedFile(filepath.Join(repoPath, "plugin.json"), manifest); err != nil {
+		return err
+	}
+	return c.writePackagePluginMarketplace(repoPath, spec)
+}
+
+func (c *copilot) removePackagePluginLinks(project, repoPath, agentsHome string) {
+	spec, err := c.selectPackagePluginSpec(agentsHome, project)
+	if err != nil {
+		return
+	}
+	if spec == nil {
+		_ = c.removePackagePluginOutputs(repoPath, agentsHome)
+		_ = os.Remove(filepath.Join(repoPath, "plugin.json"))
+		_ = os.Remove(filepath.Join(repoPath, ".github", "plugin", "marketplace.json"))
+		return
+	}
+
+	manifest, err := c.renderPackagePluginManifest(repoPath, spec)
+	_ = c.removePackagePluginOutputs(repoPath, agentsHome)
+	if err == nil {
+		_ = removeManagedFile(filepath.Join(repoPath, "plugin.json"), manifest)
+	} else {
+		_ = os.Remove(filepath.Join(repoPath, "plugin.json"))
+	}
+	if marketplace, marketplaceErr := renderCopilotMarketplace(*spec); marketplaceErr == nil {
+		_ = removeManagedFile(filepath.Join(repoPath, ".github", "plugin", "marketplace.json"), marketplace)
+	} else {
+		_ = os.Remove(filepath.Join(repoPath, ".github", "plugin", "marketplace.json"))
+	}
+}
+
+func (c *copilot) selectPackagePluginSpec(agentsHome, project string) (*PluginSpec, error) {
+	projectSpecs, err := c.packagePluginsForScope(agentsHome, project)
+	if err != nil {
+		return nil, err
+	}
+	switch len(projectSpecs) {
+	case 1:
+		return &projectSpecs[0], nil
+	case 0:
+	default:
+		return nil, nil
+	}
+
+	globalSpecs, err := c.packagePluginsForScope(agentsHome, "global")
+	if err != nil {
+		return nil, err
+	}
+	switch len(globalSpecs) {
+	case 1:
+		return &globalSpecs[0], nil
+	default:
+		return nil, nil
+	}
+}
+
+func (c *copilot) packagePluginsForScope(agentsHome, scope string) ([]PluginSpec, error) {
+	specs, err := ListPluginSpecs(agentsHome, scope)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]PluginSpec, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Kind != PluginKindPackage || !copilotPluginSpecHasPlatform(spec, c.ID()) {
+			continue
+		}
+		out = append(out, spec)
+	}
+	return out, nil
+}
+
+func copilotPluginSpecHasPlatform(spec PluginSpec, platformID string) bool {
+	for _, id := range spec.Platforms {
+		if id == platformID {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *copilot) syncPackagePluginTree(dstRoot string, srcRoots ...string) error {
+	desired, err := c.collectPackagePluginFiles(srcRoots...)
+	if err != nil {
+		return err
+	}
+	if len(desired) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(dstRoot, 0755); err != nil {
+		return err
+	}
+	rels := make([]string, 0, len(desired))
+	for rel := range desired {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+	for _, rel := range rels {
+		if err := links.Symlink(desired[rel], filepath.Join(dstRoot, rel)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *copilot) collectPackagePluginFiles(srcRoots ...string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, root := range srcRoots {
+		if root == "" {
+			continue
+		}
+		info, err := os.Stat(root)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("plugin source root %s is not a directory", root)
+		}
+		if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			out[rel] = path
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (c *copilot) removePackagePluginOutputs(repoPath, agentsHome string) error {
+	if err := c.removeSymlinksUnderPrefix(repoPath, filepath.Join(agentsHome, "plugins")); err != nil {
+		return err
+	}
+	for _, path := range []string{
+		filepath.Join(repoPath, "agents"),
+		filepath.Join(repoPath, "skills"),
+		filepath.Join(repoPath, "commands"),
+	} {
+		_ = c.removeEmptyDirsBottomUp(path)
+	}
+	return nil
+}
+
+func (c *copilot) removeSymlinksUnderPrefix(root, prefix string) error {
+	info, err := os.Stat(root)
+	if os.IsNotExist(err) || err != nil || !info.IsDir() {
+		return err
+	}
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if links.IsSymlinkUnder(path, prefix) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (c *copilot) removeEmptyDirsBottomUp(root string) error {
+	info, err := os.Stat(root)
+	if os.IsNotExist(err) || err != nil || !info.IsDir() {
+		return err
+	}
+	dirs := []string{}
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if d.IsDir() {
+			dirs = append(dirs, path)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	sort.Slice(dirs, func(i, j int) bool {
+		return len(dirs[i]) > len(dirs[j])
+	})
+	for _, dir := range dirs {
+		if dir == root {
+			continue
+		}
+		if err := removeDirIfEmpty(dir); err != nil {
+			return err
+		}
+	}
+	return removeDirIfEmpty(root)
+}
+
+func (c *copilot) renderPackagePluginManifest(repoPath string, spec *PluginSpec) ([]byte, error) {
+	manifest := copilotPluginManifest{
+		Name:        spec.Name,
+		Version:     spec.Version,
+		Description: spec.Description,
+		Homepage:    spec.Homepage,
+		License:     spec.License,
+	}
+	if len(spec.Authors) > 0 {
+		manifest.Author = &copilotPluginAuthor{Name: spec.Authors[0]}
+	}
+	if spec.Marketplace.Repo != "" {
+		manifest.Repository = spec.Marketplace.Repo
+	}
+	if len(spec.Marketplace.Tags) > 0 {
+		manifest.Keywords = append([]string{}, spec.Marketplace.Tags...)
+	}
+	if hasManagedContent(filepath.Join(repoPath, "agents")) {
+		manifest.Agents = "./agents/"
+	}
+	if hasManagedContent(filepath.Join(repoPath, "skills")) {
+		manifest.Skills = "./skills/"
+	}
+	if hasManagedContent(filepath.Join(repoPath, "commands")) {
+		manifest.Commands = "./commands/"
+	}
+	if fileExists(filepath.Join(repoPath, "hooks.json")) {
+		manifest.Hooks = "./hooks.json"
+	}
+	if fileExists(filepath.Join(repoPath, ".mcp.json")) {
+		manifest.MCPServers = "./.mcp.json"
+	}
+	return marshalJSON(manifest)
+}
+
+func (c *copilot) writePackagePluginMarketplace(repoPath string, spec *PluginSpec) error {
+	if !shouldRenderPluginMarketplace(*spec, c.ID()) {
+		return nil
+	}
+	content, err := renderCopilotMarketplace(*spec)
+	if err != nil {
+		return err
+	}
+	return writeManagedFile(filepath.Join(repoPath, ".github", "plugin", "marketplace.json"), content)
+}
+
+type copilotPluginManifest struct {
+	Name        string               `json:"name"`
+	Version     string               `json:"version,omitempty"`
+	Description string               `json:"description,omitempty"`
+	Author      *copilotPluginAuthor `json:"author,omitempty"`
+	Homepage    string               `json:"homepage,omitempty"`
+	Repository  string               `json:"repository,omitempty"`
+	License     string               `json:"license,omitempty"`
+	Keywords    []string             `json:"keywords,omitempty"`
+	Agents      string               `json:"agents,omitempty"`
+	Skills      string               `json:"skills,omitempty"`
+	Commands    string               `json:"commands,omitempty"`
+	Hooks       string               `json:"hooks,omitempty"`
+	MCPServers  string               `json:"mcpServers,omitempty"`
+}
+
+type copilotPluginAuthor struct {
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
+	URL   string `json:"url,omitempty"`
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func hasManagedContent(path string) bool {
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) > 0
 }

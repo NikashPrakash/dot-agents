@@ -186,6 +186,7 @@ output_status_text() {
 
   # User-level config summary
   status_print_user_config_summary
+  status_print_plugin_store_summary
 
   # Count projects
   local count=0
@@ -251,6 +252,12 @@ output_status_text() {
       else
         echo -e "         ${YELLOW}○${NC} manifest  ${DIM}not found — run: dot-agents install --generate${NC}"
       fi
+
+      local package_plugin_roots
+      package_plugin_roots=$(status_count_package_plugin_roots "$path")
+      if [[ "$package_plugin_roots" -gt 0 ]]; then
+        echo -e "         ${GREEN}✓${NC} plugins   ${DIM}${package_plugin_roots} emitted package root(s)${NC}"
+      fi
     fi
     echo ""
   done <<< "$projects"
@@ -266,6 +273,7 @@ status_print_user_config_summary() {
   local codex_warn=0
   local opencode_ok=0
   local opencode_warn=0
+  local opencode_plugins_dir="$HOME/.config/opencode/plugins"
 
   # Claude: ~/.claude/CLAUDE.md and settings.json, agents/, skills/
   local claude_home="$HOME/.claude"
@@ -373,6 +381,16 @@ status_print_user_config_summary() {
     done
   fi
 
+  if [[ -d "$opencode_plugins_dir" ]]; then
+    local n=0
+    for d in "$opencode_plugins_dir"/*; do
+      [[ -e "$d" ]] && ((n++)) || true
+    done
+    if [[ "$n" -gt 0 ]]; then
+      ((opencode_ok++)) || true
+    fi
+  fi
+
   # Build badges
   local claude_badge codex_badge opencode_badge
 
@@ -402,6 +420,42 @@ status_print_user_config_summary() {
 
   echo -e "  $claude_badge  $codex_badge  $opencode_badge"
   echo ""
+}
+
+status_print_plugin_store_summary() {
+  local plugin_store="$AGENTS_HOME/plugins"
+  if [[ ! -d "$plugin_store" ]]; then
+    return 0
+  fi
+
+  local bundle_count
+  bundle_count=$(find "$plugin_store" -name PLUGIN.yaml -type f 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$bundle_count" -gt 0 ]]; then
+    echo -e "Plugins"
+    echo -e "  ${GREEN}✓${NC} Canonical plugin store ${DIM}($bundle_count bundle(s))${NC}"
+    echo ""
+  fi
+}
+
+status_count_package_plugin_roots() {
+  local path="$1"
+  local count=0
+
+  for rel in ".claude-plugin/plugin.json" ".claude-plugin/marketplace.json" \
+    ".cursor-plugin/plugin.json" ".cursor-plugin/marketplace.json" \
+    ".codex-plugin/plugin.json" ".agents/plugins/marketplace.json" \
+    "plugin.json" ".github/plugin/marketplace.json"; do
+    [[ -e "$path/$rel" ]] && ((count++)) || true
+  done
+
+  if [[ -d "$path/.opencode/plugins" ]]; then
+    local entry
+    for entry in "$path/.opencode/plugins"/*; do
+      [[ -e "$entry" ]] && { ((count++)) || true; break; }
+    done
+  fi
+
+  echo "$count"
 }
 
 # Check project links and return comma-separated issues
@@ -596,6 +650,8 @@ output_audit_text() {
     if [ -z "$agent_filter" ] || [ "$agent_filter" = "github-copilot" ] || [ "$agent_filter" = "copilot" ]; then
       audit_copilot_text "$name" "$path"
     fi
+
+    audit_plugins_text "$name" "$path"
 
   done <<< "$projects"
 }
@@ -818,6 +874,48 @@ audit_copilot_text() {
   else
     echo -e "    ${DIM}(no .claude/settings.local.json)${NC}"
   fi
+  echo ""
+}
+
+audit_plugins_text() {
+  local name="$1"
+  local path="$2"
+
+  echo -e "  ${CYAN}Plugins${NC}"
+
+  local shown=false
+
+  if [ -e "$path/.claude-plugin/plugin.json" ] || [ -e "$path/.claude-plugin/marketplace.json" ]; then
+    echo -e "    ${GREEN}✓${NC} .claude-plugin/"
+    shown=true
+  fi
+  if [ -e "$path/.cursor-plugin/plugin.json" ] || [ -e "$path/.cursor-plugin/marketplace.json" ]; then
+    echo -e "    ${GREEN}✓${NC} .cursor-plugin/"
+    shown=true
+  fi
+  if [ -e "$path/.codex-plugin/plugin.json" ] || [ -e "$path/.agents/plugins/marketplace.json" ]; then
+    echo -e "    ${GREEN}✓${NC} .codex-plugin/ and .agents/plugins/"
+    shown=true
+  fi
+  if [ -e "$path/plugin.json" ] || [ -e "$path/.github/plugin/marketplace.json" ]; then
+    echo -e "    ${GREEN}✓${NC} plugin.json / .github/plugin/"
+    shown=true
+  fi
+  if [ -d "$path/.opencode/plugins" ]; then
+    local n=0
+    for d in "$path/.opencode/plugins"/*; do
+      [ -e "$d" ] && ((n++)) || true
+    done
+    if [ "$n" -gt 0 ]; then
+      echo -e "    ${GREEN}✓${NC} .opencode/plugins/ ${DIM}($n bundle root(s))${NC}"
+      shown=true
+    fi
+  fi
+
+  if [ "$shown" = false ]; then
+    echo -e "    ${DIM}○${NC} no package plugin roots"
+  fi
+
   echo ""
 }
 

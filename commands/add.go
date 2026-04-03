@@ -41,6 +41,7 @@ var aiScanPatterns = []string{
 	".github/copilot-instructions.md",
 	".vscode/mcp.json",
 	"copilot-instructions.md",
+	"plugin.json",
 	// Windsurf / other
 	".windsurfrules",
 	".ai-rules",
@@ -54,8 +55,12 @@ var aiScanDirPatterns = []string{
 	".claude/agents",
 	".claude/skills",
 	".claude/rules",
+	".claude-plugin",
 	".codex/agents",
+	".codex-plugin",
+	".cursor-plugin",
 	".opencode/agent",
+	".opencode/plugins",
 	".continue",
 	".github/agents",
 	".github/hooks",
@@ -106,6 +111,9 @@ func scanExistingAIConfigs(projectPath string) []string {
 			}
 		}
 	}
+	for _, p := range scanPluginRoots(projectPath) {
+		add(p)
+	}
 
 	// Walk for .aider* and aider.conf* anywhere in the tree
 	_ = filepath.WalkDir(projectPath, func(path string, d os.DirEntry, err error) error {
@@ -123,6 +131,64 @@ func scanExistingAIConfigs(projectPath string) []string {
 	})
 
 	return results
+}
+
+func scanPluginRoots(projectPath string) []string {
+	var results []string
+
+	for _, root := range []string{".claude-plugin", ".cursor-plugin", ".codex-plugin"} {
+		pluginRoot := filepath.Join(projectPath, root)
+		if info, err := os.Stat(pluginRoot); err == nil && info.IsDir() {
+			results = append(results, pluginRoot)
+		}
+	}
+
+	opencodePlugins := filepath.Join(projectPath, ".opencode", "plugins")
+	if entries, err := os.ReadDir(opencodePlugins); err == nil {
+		for _, entry := range entries {
+			pluginDir := filepath.Join(opencodePlugins, entry.Name())
+			if !entry.IsDir() {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(pluginDir, "PLUGIN.yaml")); err == nil {
+				results = append(results, pluginDir)
+			}
+		}
+	}
+
+	if info, err := os.Stat(filepath.Join(projectPath, "plugin.json")); err == nil && !info.IsDir() {
+		results = append(results, filepath.Join(projectPath, "plugin.json"))
+	}
+
+	return results
+}
+
+func filterPluginRoots(paths []string) []string {
+	var results []string
+	for _, p := range paths {
+		if isPluginNativePath(p) {
+			results = append(results, p)
+		}
+	}
+	return results
+}
+
+func isPluginNativePath(path string) bool {
+	base := filepath.Base(path)
+	if base == "plugin.json" || base == "marketplace.json" {
+		return true
+	}
+	for _, fragment := range []string{
+		string(filepath.Separator) + ".claude-plugin" + string(filepath.Separator),
+		string(filepath.Separator) + ".cursor-plugin" + string(filepath.Separator),
+		string(filepath.Separator) + ".codex-plugin" + string(filepath.Separator),
+		string(filepath.Separator) + ".opencode" + string(filepath.Separator) + "plugins" + string(filepath.Separator),
+	} {
+		if strings.Contains(path, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkExistingConfigFiles returns root-level AI config files/entries that dot-agents would replace.
@@ -244,10 +310,11 @@ func runAdd(pathArg, nameArg string) error {
 	ui.PreviewSection(displayAgentsHome+"/",
 		"rules/"+projectName+"/              (project rules)",
 		"settings/"+projectName+"/           (project settings)",
-		"  └── claude-code.json            (hooks, permissions)",
+		"  └── claude-code.json              (hooks, permissions)",
 		"mcp/"+projectName+"/                (project MCP configs)",
 		"skills/"+projectName+"/             (project skills)",
 		"agents/"+projectName+"/             (project subagents)",
+		"plugins/"+projectName+"/            (project plugins)",
 	)
 
 	// Per-platform link preview
@@ -361,6 +428,15 @@ func runAdd(pathArg, nameArg string) error {
 			discoveredElsewhere = append(discoveredElsewhere, f)
 		}
 	}
+	pluginRoots := filterPluginRoots(discoveredElsewhere)
+	if len(pluginRoots) > 0 {
+		ui.Section("Plugin Roots Discovered")
+		fmt.Fprintf(os.Stdout, "  %sFound plugin package roots elsewhere in the repo (not replaced):%s\n", ui.Cyan, ui.Reset)
+		for _, f := range pluginRoots {
+			rel := strings.TrimPrefix(f, projectPath+"/")
+			fmt.Fprintf(os.Stdout, "  %s○%s %s %s(plugin)%s\n", ui.Dim, ui.Reset, rel, ui.Dim, ui.Reset)
+		}
+	}
 	if len(discoveredElsewhere) > 0 {
 		ui.Section("Other AI Configs Discovered")
 		fmt.Fprintf(os.Stdout, "  %sFound AI agent configs elsewhere in the repo (not replaced):%s\n", ui.Cyan, ui.Reset)
@@ -441,9 +517,6 @@ func runAdd(pathArg, nameArg string) error {
 		}
 	}
 
-	// Add .agents-refresh to .gitignore
-	ensureGitignoreEntry(projectPath, ".agents-refresh")
-
 	// Step 6: Register
 	cfg.AddProject(projectName, projectPath)
 	if err := cfg.Save(); err != nil {
@@ -476,6 +549,7 @@ func createProjectDirs(project string) error {
 		filepath.Join(agentsHome, "skills", project),
 		filepath.Join(agentsHome, "agents", project),
 		filepath.Join(agentsHome, "hooks", project),
+		filepath.Join(agentsHome, "plugins", project),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0755); err != nil {
@@ -541,6 +615,9 @@ func restoreResourceFileCount(project, resourcesDir, agentsHome, path string, d 
 	canonicalCount, handled := restoreCanonicalResourceFile(project, resourcesDir, agentsHome, path)
 	if handled {
 		return canonicalCount
+	}
+	if shouldSuppressLegacyImportFallback(resourcesDir, filepath.ToSlash(relPath)) {
+		return 0
 	}
 	return restoreLegacyResourceFile(project, relPath, agentsHome, path)
 }

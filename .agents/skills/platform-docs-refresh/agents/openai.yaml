@@ -1,0 +1,2 @@
+name: platform-docs-refresh
+description: Refresh official platform documentation links, cache markdown-friendly source pages, and update the repo's platform compatibility docs.

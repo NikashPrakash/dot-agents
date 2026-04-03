@@ -57,6 +57,19 @@ dot_agents_map_resource_rel_to_agents_dest() {
       name=$(basename "$rel")
       echo "hooks/$project/$name"
       ;;
+    ".opencode/plugins/"*)
+      local rest="${rel#.opencode/plugins/}"
+      local plugin_name="${rest%%/*}"
+      local plugin_path="${rest#*/}"
+      if [ -n "$plugin_name" ] && [ -n "$plugin_path" ] && [ "$plugin_path" != "$plugin_name" ]; then
+        echo "plugins/$project/$plugin_name/files/$plugin_path"
+      else
+        echo ""
+      fi
+      ;;
+    "plugins/"*)
+      echo "$rel"
+      ;;
     ".cursor/rules/"*)
       local name
       name=$(basename "$rel")
@@ -103,19 +116,19 @@ dot_agents_platform_has_active_backup() {
 
   case "$platform" in
     cursor)
-      [ -e "$root/.cursor/rules" ] || [ -e "$root/.cursor/agents" ] || [ -e "$root/.cursor/settings.json" ] || [ -e "$root/.cursor/mcp.json" ] || [ -e "$root/.cursorignore" ]
+      [ -e "$root/.cursor/rules" ] || [ -e "$root/.cursor/agents" ] || [ -e "$root/.cursor/settings.json" ] || [ -e "$root/.cursor/mcp.json" ] || [ -e "$root/.cursorignore" ] || [ -e "$root/.cursor-plugin" ]
       ;;
     claude)
-      [ -e "$root/.claude/rules" ] || [ -e "$root/.claude/skills" ] || [ -e "$root/.claude/agents" ] || [ -e "$root/.claude/settings.local.json" ] || [ -e "$root/.mcp.json" ]
+      [ -e "$root/.claude/rules" ] || [ -e "$root/.claude/skills" ] || [ -e "$root/.claude/agents" ] || [ -e "$root/.claude/settings.local.json" ] || [ -e "$root/.mcp.json" ] || [ -e "$root/.claude-plugin" ]
       ;;
     codex)
-      [ -e "$root/AGENTS.md" ] || [ -e "$root/AGENTS.md.dot-agents-backup" ] || [ -e "$root/.codex/agents" ] || [ -e "$root/.codex/config.toml" ] || [ -e "$root/.codex/config.toml.dot-agents-backup" ] || [ -e "$root/.codex/instructions.md" ] || [ -e "$root/.codex/instructions.md.dot-agents-backup" ] || [ -e "$root/.agents/skills" ]
+      [ -e "$root/AGENTS.md" ] || [ -e "$root/AGENTS.md.dot-agents-backup" ] || [ -e "$root/.codex/agents" ] || [ -e "$root/.codex/config.toml" ] || [ -e "$root/.codex/config.toml.dot-agents-backup" ] || [ -e "$root/.codex/instructions.md" ] || [ -e "$root/.codex/instructions.md.dot-agents-backup" ] || [ -e "$root/.agents/skills" ] || [ -e "$root/.codex-plugin" ] || [ -e "$root/.agents/plugins" ]
       ;;
     opencode)
-      [ -e "$root/opencode.json" ] || [ -e "$root/.opencode/agent" ] || [ -e "$root/.opencode/config.json" ] || [ -e "$root/.opencode/instructions.md" ]
+      [ -e "$root/opencode.json" ] || [ -e "$root/.opencode/agent" ] || [ -e "$root/.opencode/config.json" ] || [ -e "$root/.opencode/instructions.md" ] || [ -e "$root/.opencode/plugins" ] || [ -e "$root/plugins" ]
       ;;
     copilot)
-      [ -e "$root/.github/copilot-instructions.md" ] || [ -e "$root/.github/agents" ] || [ -e "$root/.vscode/mcp.json" ] || [ -e "$root/.claude/settings.local.json" ] || [ -e "$root/.agents/skills" ]
+      [ -e "$root/.github/copilot-instructions.md" ] || [ -e "$root/.github/agents" ] || [ -e "$root/.vscode/mcp.json" ] || [ -e "$root/.claude/settings.local.json" ] || [ -e "$root/.agents/skills" ] || [ -e "$root/plugin.json" ] || [ -e "$root/.github/plugin" ]
       ;;
     *)
       return 1

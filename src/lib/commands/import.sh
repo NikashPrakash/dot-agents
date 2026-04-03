@@ -41,7 +41,7 @@ _import_project_candidates() {
   done
 
   local dir path dest_rel rel_path
-  for dir in ".cursor/rules" ".agents/skills" ".claude/skills" ".github/agents" ".codex/agents"; do
+  for dir in ".cursor/rules" ".agents/skills" ".claude/skills" ".github/agents" ".codex/agents" ".opencode/plugins"; do
     [[ -d "$repo/$dir" ]] || continue
     while IFS= read -r -d '' path; do
       rel_path="${path#$repo/}"

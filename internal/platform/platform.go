@@ -31,6 +31,16 @@ func All() []Platform {
 	}
 }
 
+// IDs returns the ordered list of supported platform identifiers.
+func IDs() []string {
+	platforms := All()
+	out := make([]string, 0, len(platforms))
+	for _, p := range platforms {
+		out = append(out, p.ID())
+	}
+	return out
+}
+
 // ByID returns the platform with the given ID, or nil.
 func ByID(id string) Platform {
 	for _, p := range All() {
@@ -39,4 +49,9 @@ func ByID(id string) Platform {
 		}
 	}
 	return nil
+}
+
+// IsKnownID reports whether id matches a supported platform identifier.
+func IsKnownID(id string) bool {
+	return ByID(id) != nil
 }

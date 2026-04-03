@@ -92,7 +92,7 @@ func (c *cursor) CreateLinks(project, repoPath string) error {
 	if err := c.createHooksLinks(project, repoPath, agentsHome); err != nil {
 		return err
 	}
-	return nil
+	return c.createPackagePluginLinks(project, repoPath, agentsHome)
 }
 
 func (c *cursor) createRuleLinks(project, repoPath, agentsHome string) error {
@@ -167,6 +167,67 @@ func (c *cursor) createHooksLinks(project, repoPath, agentsHome string) error {
 	return c.writeUserHomeHooks(project, agentsHome)
 }
 
+func (c *cursor) createPackagePluginLinks(project, repoPath, agentsHome string) error {
+	specs, _, err := preferredPackagePluginsForPlatform(agentsHome, project, c.ID())
+	if err != nil {
+		return err
+	}
+
+	root := filepath.Join(repoPath, ".cursor-plugin")
+	if len(specs) != 1 {
+		return c.removePackagePluginLinks(root, agentsHome)
+	}
+
+	spec := specs[0]
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(root, pluginFilesDir(spec), pluginPlatformDir(spec, c.ID())); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "rules"), pluginResourcesDir(spec, "rules")); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "agents"), pluginResourcesDir(spec, "agents")); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "skills"), pluginResourcesDir(spec, "skills")); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "commands"), pluginResourcesDir(spec, "commands")); err != nil {
+		return err
+	}
+	if err := syncPluginOverlayTree(filepath.Join(root, "hooks"), pluginResourcesDir(spec, "hooks")); err != nil {
+		return err
+	}
+	if err := cursorPluginSyncNamedFile(filepath.Join(root, "mcp.json"), cursorPluginFindSourceFile(spec, "mcp.json")); err != nil {
+		return err
+	}
+	if err := c.emitPackagePluginManifest(root, spec); err != nil {
+		return err
+	}
+	return c.emitPackagePluginMarketplace(root, spec)
+}
+
+func (c *cursor) emitPackagePluginManifest(root string, spec PluginSpec) error {
+	content, err := renderCursorPackagePluginManifest(spec)
+	if err != nil {
+		return err
+	}
+	return writeManagedFile(filepath.Join(root, "plugin.json"), content)
+}
+
+func (c *cursor) emitPackagePluginMarketplace(root string, spec PluginSpec) error {
+	if !shouldRenderPluginMarketplace(spec, c.ID()) {
+		return nil
+	}
+	content, err := renderCursorMarketplace(spec)
+	if err != nil {
+		return err
+	}
+	return writeManagedFile(filepath.Join(root, "marketplace.json"), content)
+}
+
 func (c *cursor) writeRepoHooks(project, repoPath, agentsHome string) error {
 	repoTarget := filepath.Join(repoPath, cursorDir, cursorHooksFile)
 	repoBundles, err := collectCanonicalHookSpecsForPlatform(agentsHome, project, c.ID(), "global", project)
@@ -210,6 +271,7 @@ func (c *cursor) RemoveLinks(project, repoPath string) error {
 	c.removeRuleLinks(project, repoPath, agentsHome)
 	c.removeHooksLink(project, repoPath, agentsHome)
 	c.removeAgentLinks(repoPath, agentsHome)
+	_ = c.removePackagePluginLinks(filepath.Join(repoPath, ".cursor-plugin"), agentsHome)
 
 	return nil
 }
@@ -290,4 +352,101 @@ func removeHardlinkIfLinkedToAny(path string, sources []string) bool {
 		}
 	}
 	return false
+}
+
+type cursorPackagePluginManifest struct {
+	Name        string        `json:"name"`
+	Version     string        `json:"version,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Author      *pluginAuthor `json:"author,omitempty"`
+	Homepage    string        `json:"homepage,omitempty"`
+	Repository  string        `json:"repository,omitempty"`
+	License     string        `json:"license,omitempty"`
+	Keywords    []string      `json:"keywords,omitempty"`
+	Rules       string        `json:"rules,omitempty"`
+	Commands    string        `json:"commands,omitempty"`
+	Agents      string        `json:"agents,omitempty"`
+	Skills      string        `json:"skills,omitempty"`
+	Hooks       string        `json:"hooks,omitempty"`
+	MCPServers  string        `json:"mcpServers,omitempty"`
+}
+
+func renderCursorPackagePluginManifest(spec PluginSpec) ([]byte, error) {
+	manifest := cursorPackagePluginManifest{
+		Name:        spec.Name,
+		Version:     spec.Version,
+		Description: spec.Description,
+		Author:      pluginAuthorFromSpec(spec),
+		Homepage:    spec.Homepage,
+		Repository:  spec.Marketplace.Repo,
+		License:     spec.License,
+		Keywords:    append([]string(nil), spec.Marketplace.Tags...),
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "rules")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "cursor"), "rules")) {
+		manifest.Rules = "./rules/"
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "commands")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "cursor"), "commands")) {
+		manifest.Commands = "./commands/"
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "agents")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "cursor"), "agents")) {
+		manifest.Agents = "./agents/"
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "skills")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "cursor"), "skills")) {
+		manifest.Skills = "./skills/"
+	}
+	if pluginDirHasFiles(pluginResourcesDir(spec, "hooks")) || pluginDirHasFiles(filepath.Join(pluginPlatformDir(spec, "cursor"), "hooks")) {
+		manifest.Hooks = "./hooks/hooks.json"
+	}
+	if cursorPluginFindSourceFile(spec, "mcp.json", ".mcp.json") != "" {
+		manifest.MCPServers = "./mcp.json"
+	}
+	return marshalJSON(manifest)
+}
+
+func (c *cursor) removePackagePluginLinks(root, agentsHome string) error {
+	_ = os.Remove(filepath.Join(root, "plugin.json"))
+	_ = os.Remove(filepath.Join(root, "marketplace.json"))
+	prefix := filepath.Join(agentsHome, "plugins")
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "rules"), prefix)
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "agents"), prefix)
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "skills"), prefix)
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "commands"), prefix)
+	_ = removeManagedPluginOverlayTree(filepath.Join(root, "hooks"), prefix)
+	_ = os.Remove(filepath.Join(root, "mcp.json"))
+	_ = removeManagedPluginOverlayTree(root, prefix)
+	_ = pruneEmptyDirsBottomUp(root)
+	return nil
+}
+
+func cursorPluginFindSourceFile(spec PluginSpec, names ...string) string {
+	for _, dir := range []string{
+		pluginResourcesDir(spec, "mcp"),
+		pluginPlatformDir(spec, "cursor"),
+	} {
+		for _, name := range names {
+			src := filepath.Join(dir, name)
+			if info, err := os.Stat(src); err == nil && !info.IsDir() {
+				return src
+			}
+		}
+	}
+	return ""
+}
+
+func cursorPluginSyncNamedFile(dst string, src string) error {
+	if src == "" {
+		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		if err := os.Remove(dst); err != nil {
+			return err
+		}
+	}
+	return os.Symlink(src, dst)
 }

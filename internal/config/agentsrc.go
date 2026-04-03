@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 // isDirEntry reports whether the path is a directory, following symlinks.
@@ -96,16 +97,26 @@ func (s *StringsOrBool) UnmarshalJSON(data []byte) error {
 
 // AgentsRC represents the .agentsrc.json manifest committed to a project repo.
 type AgentsRC struct {
-	Schema   string        `json:"$schema,omitempty"`
-	Version  int           `json:"version"`
-	Project  string        `json:"project,omitempty"`
-	Skills   []string      `json:"skills,omitempty"`
-	Rules    []string      `json:"rules,omitempty"`
-	Agents   []string      `json:"agents,omitempty"`
-	Hooks    StringsOrBool `json:"hooks"`
-	MCP      StringsOrBool `json:"mcp"`
-	Settings bool          `json:"settings"`
-	Sources  []Source      `json:"sources"`
+	Schema   string           `json:"$schema,omitempty"`
+	Version  int              `json:"version"`
+	Project  string           `json:"project,omitempty"`
+	Skills   []string         `json:"skills,omitempty"`
+	Rules    []string         `json:"rules,omitempty"`
+	Agents   []string         `json:"agents,omitempty"`
+	Plugins  []string         `json:"plugins,omitempty"`
+	Hooks    StringsOrBool    `json:"hooks"`
+	MCP      StringsOrBool    `json:"mcp"`
+	Settings bool             `json:"settings"`
+	Sources  []Source         `json:"sources"`
+	Refresh  *RefreshMetadata `json:"refresh,omitempty"`
+}
+
+// RefreshMetadata records the latest dot-agents install/refresh that updated a project.
+type RefreshMetadata struct {
+	Version     string `json:"version,omitempty"`
+	Commit      string `json:"commit,omitempty"`
+	Describe    string `json:"describe,omitempty"`
+	RefreshedAt string `json:"refreshedAt,omitempty"`
 }
 
 // Source describes where to find agent resources.
@@ -117,6 +128,19 @@ type Source struct {
 }
 
 const AgentsRCFile = ".agentsrc.json"
+
+// SetRefreshMetadata stores the latest refresh details in the manifest.
+func (a *AgentsRC) SetRefreshMetadata(version, commit, describe string, refreshedAt time.Time) {
+	if a == nil {
+		return
+	}
+	a.Refresh = &RefreshMetadata{
+		Version:     version,
+		Commit:      commit,
+		Describe:    describe,
+		RefreshedAt: refreshedAt.UTC().Format(time.RFC3339),
+	}
+}
 
 // LoadAgentsRC reads .agentsrc.json from the given project directory.
 func LoadAgentsRC(projectPath string) (*AgentsRC, error) {
@@ -187,6 +211,7 @@ func GenerateAgentsRC(projectName, projectPath string) (*AgentsRC, error) {
 	scopes := []string{"global", projectName}
 	rc.Skills = collectScopedDirs(agentsHome, "skills", scopes, "SKILL.md")
 	rc.Agents = collectScopedDirs(agentsHome, "agents", scopes, "AGENT.md")
+	rc.Plugins = collectScopedDirs(agentsHome, "plugins", scopes, "PLUGIN.yaml")
 	rc.Rules = detectRuleScopes(agentsHome, projectName)
 	rc.Hooks = detectHookEvents(agentsHome, projectName)
 	rc.MCP = detectMCPServers(agentsHome, projectName)

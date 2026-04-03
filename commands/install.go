@@ -21,7 +21,7 @@ func NewInstallCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Set up project from .agentsrc.json manifest",
 		Long: `Reads .agentsrc.json in the current directory and wires up all declared
-resources (skills, rules, agents, hooks, MCP configs, settings) by creating
+resources (skills, rules, agents, plugins, hooks, MCP configs, settings) by creating
 the appropriate platform-specific symlinks and hard links.
 
 Commit .agentsrc.json to git so any contributor can run 'dot-agents install'
@@ -72,12 +72,15 @@ func runInstall(strict bool) error {
 	if err := ensureInstallProjectDirs(projectName); err != nil {
 		return err
 	}
+	if err := ensureInstallPluginDirs(projectName); err != nil {
+		return err
+	}
 	if err := registerInstallProject(projectName, projectPath); err != nil {
 		return err
 	}
 
 	createInstallPlatformLinks(projectName, projectPath)
-	finalizeInstall(projectPath)
+	finalizeInstall(projectName, projectPath)
 
 	ui.SuccessBox(
 		fmt.Sprintf("Project '%s' installed successfully!", projectName),
@@ -131,7 +134,10 @@ func linkInstallResources(projectName string, rc *config.AgentsRC, resolvedSourc
 	if err := linkInstallResourceList("skills", "skill", rc.Skills, projectName, resolvedSources, strict); err != nil {
 		return err
 	}
-	return linkInstallResourceList("agents", "agent", rc.Agents, projectName, resolvedSources, strict)
+	if err := linkInstallResourceList("agents", "agent", rc.Agents, projectName, resolvedSources, strict); err != nil {
+		return err
+	}
+	return linkInstallResourceList("plugins", "plugin", rc.Plugins, projectName, resolvedSources, strict)
 }
 
 func linkInstallResourceList(resourceType, label string, names []string, projectName string, sources []string, strict bool) error {
@@ -156,6 +162,19 @@ func ensureInstallProjectDirs(projectName string) error {
 		return err
 	}
 	ui.Bullet("ok", "Ensured ~/.agents/ project directories")
+	return nil
+}
+
+func ensureInstallPluginDirs(projectName string) error {
+	if Flags.DryRun {
+		ui.DryRun("create ~/.agents/plugins directories for '" + projectName + "'")
+		return nil
+	}
+	pluginsDir := filepath.Join(config.AgentsHome(), "plugins", projectName)
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		return err
+	}
+	ui.Bullet("ok", "Ensured ~/.agents/plugins project directories")
 	return nil
 }
 
@@ -203,13 +222,15 @@ func createInstallPlatformLinks(projectName, projectPath string) {
 	}
 }
 
-func finalizeInstall(projectPath string) {
+func finalizeInstall(projectName, projectPath string) {
 	if Flags.DryRun {
 		return
 	}
-	writeRefreshMarker(projectPath, Commit, Describe)
-	ensureGitignoreEntry(projectPath, ".agents-refresh")
-	ui.Bullet("ok", "Wrote .agents-refresh marker")
+	if err := writeRefreshMetadata(projectName, projectPath, Version, Commit, Describe); err != nil {
+		ui.Bullet("warn", fmt.Sprintf("manifest refresh metadata: %v", err))
+		return
+	}
+	ui.Bullet("ok", "Updated .agentsrc.json refresh details")
 }
 
 // ─── runInstallGenerate ──────────────────────────────────────────────────────
@@ -240,6 +261,7 @@ func runInstallGenerate() error {
 		ui.DryRun(fmt.Sprintf("  skills:   %v", rc.Skills))
 		ui.DryRun(fmt.Sprintf("  rules:    %v", rc.Rules))
 		ui.DryRun(fmt.Sprintf("  agents:   %v", rc.Agents))
+		ui.DryRun(fmt.Sprintf("  plugins:  %v", rc.Plugins))
 		ui.DryRun(fmt.Sprintf("  hooks:    %v", rc.Hooks))
 		ui.DryRun(fmt.Sprintf("  mcp:      %v", rc.MCP))
 		ui.DryRun(fmt.Sprintf("  settings: %v", rc.Settings))
@@ -251,8 +273,8 @@ func runInstallGenerate() error {
 	}
 
 	ui.Success("Generated " + config.AgentsRCFile)
-	fmt.Fprintf(os.Stdout, "  %sSkills: %d, Rules: %d, Agents: %d%s\n",
-		ui.Dim, len(rc.Skills), len(rc.Rules), len(rc.Agents), ui.Reset)
+	fmt.Fprintf(os.Stdout, "  %sSkills: %d, Rules: %d, Agents: %d, Plugins: %d%s\n",
+		ui.Dim, len(rc.Skills), len(rc.Rules), len(rc.Agents), len(rc.Plugins), ui.Reset)
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Next steps:")
 	fmt.Fprintf(os.Stdout, "  1. Review:  cat %s\n", config.AgentsRCFile)
@@ -439,6 +461,8 @@ func resourceMarkerFile(resourceType string) string {
 		return "SKILL.md"
 	case "agents":
 		return "AGENT.md"
+	case "plugins":
+		return "PLUGIN.yaml"
 	default:
 		return ""
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/NikashPrakash/dot-agents/internal/config"
 	"github.com/NikashPrakash/dot-agents/internal/platform"
@@ -151,9 +152,11 @@ func runRefresh(projectFilter string) error {
 		}
 
 		if !Flags.DryRun {
-			writeRefreshMarker(path, refreshCommit, refreshDescribe)
+			if err := writeRefreshMetadata(name, path, Version, refreshCommit, refreshDescribe); err != nil {
+				ui.Bullet("warn", fmt.Sprintf("manifest refresh metadata: %v", err))
+			}
 		} else {
-			msg := "Write .agents-refresh"
+			msg := "Update .agentsrc.json refresh details"
 			if refreshCommit != "" {
 				msg += " (commit=" + refreshCommit[:8] + ")"
 			}
@@ -178,11 +181,28 @@ func resolveRefreshCommit() (string, string) {
 	return Commit, Describe
 }
 
-func writeRefreshMarker(projectPath, commit, describe string) {
-	markerPath := filepath.Join(projectPath, ".agents-refresh")
-	content := refreshMarkerContent(Version, commit, describe)
-	os.WriteFile(markerPath, content, 0644)
-	ensureGitignoreEntry(projectPath, ".agents-refresh")
+func writeRefreshMetadata(projectName, projectPath, version, commit, describe string) error {
+	rc, err := config.LoadAgentsRC(projectPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		rc, err = config.GenerateAgentsRC(projectName, projectPath)
+		if err != nil {
+			return err
+		}
+	}
+
+	rc.SetRefreshMetadata(version, commit, describe, time.Now())
+	if err := rc.Save(projectPath); err != nil {
+		return err
+	}
+
+	legacyMarkerPath := filepath.Join(projectPath, ".agents-refresh")
+	if err := os.Remove(legacyMarkerPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func restoreFromResources(project, projectPath string) {
@@ -263,6 +283,15 @@ func mapResourceRelToDest(project, relPath string) string {
 		return "agents/" + project + "/" + name + "/AGENT.md"
 	}
 
+	// .opencode/plugins/<name>/<path> → plugins/<project>/<name>/files/<path>
+	if strings.HasPrefix(relPath, relOpenCodePluginsDir) {
+		rest := strings.TrimPrefix(relPath, relOpenCodePluginsDir)
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return filepath.ToSlash(filepath.Join("plugins", project, parts[0], "files", parts[1]))
+		}
+	}
+
 	// .github/hooks/<name>.json → hooks/<project>/<name>.json
 	if strings.HasPrefix(relPath, relGitHubHooksDir) && strings.HasSuffix(relPath, relJSONSuffix) {
 		name := strings.TrimSuffix(filepath.Base(relPath), relJSONSuffix)
@@ -270,7 +299,7 @@ func mapResourceRelToDest(project, relPath string) string {
 	}
 
 	// Pass-through: paths already under known ~/.agents dirs
-	for _, prefix := range []string{"rules/", "settings/", "mcp/", "skills/", "agents/", agentsHooksPrefix} {
+	for _, prefix := range []string{"rules/", "settings/", "mcp/", "skills/", "agents/", "plugins/", agentsHooksPrefix} {
 		if strings.HasPrefix(relPath, prefix) {
 			return relPath
 		}

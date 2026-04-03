@@ -230,7 +230,7 @@ No-collision rule:
 - Bash workers do not touch `src/lib/commands/*` or shared utils.
 
 ### Phase 5: New bucket expansion
-Status: Not started
+Status: In progress
 
 After current resources are stable in both Go and bash.
 
@@ -243,6 +243,265 @@ Parallel worker split:
 - Worker B: OpenCode resource additions
 - Worker C: Copilot resource additions
 - Codex likely has no new standalone bucket unless docs or product behavior change
+
+### Phase 5A: Plugin contract and canonical storage
+Status: Completed
+
+Plugins should be treated as one first-class canonical bucket with a `PLUGIN.yaml` manifest, not as unrelated per-platform top-level buckets.
+
+Canonical shape:
+- `plugins/<scope>/<plugin-name>/PLUGIN.yaml`
+- `plugins/<scope>/<plugin-name>/resources/`
+- `plugins/<scope>/<plugin-name>/files/`
+- `plugins/<scope>/<plugin-name>/platforms/<platform>/`
+
+Coordinator-owned files:
+- `commands/init.go`
+- `commands/status.go`
+- `commands/explain.go`
+- `internal/platform/platform.go`
+- new shared helper file under `internal/platform/` for plugin descriptor loading and shared emit/import helpers
+- `docs/PLUGIN_SUPPORT_STRATEGY.md`
+
+Scope:
+- define the canonical `PLUGIN.yaml` schema
+- define plugin kinds: `native` and `package`
+- add canonical `plugins/` bucket creation to `init`
+- update README and explain output to document the plugin bucket
+- keep marketplace metadata inside `PLUGIN.yaml`, not as a separate canonical bucket
+- define the `.agentsrc.json` plugin representation as part of the shared contract
+
+Phase gate:
+- no platform plugin emitter work until the canonical manifest and storage shape are settled
+
+Implemented:
+- canonical `plugins/` bucket creation and documentation in `init`/`explain`
+- shared canonical `PLUGIN.yaml` loading and validation helpers
+- first-class plugin bucket visibility in `status`
+- `.agentsrc.json` plugin representation defined as part of the shared contract
+
+### Phase 5B: Command-layer adoption, import, and lifecycle
+Status: In progress
+
+This phase is the real plugin rollout surface for the CLI.
+
+Coordinator-owned files:
+- `commands/add.go`
+- `commands/import.go`
+- `commands/refresh.go`
+- `commands/status.go`
+- `commands/doctor.go`
+- `commands/remove.go`
+- shared tests in `commands/*_test.go`
+
+Scope:
+- detect plugin-native repo roots during `add`
+- add direct platform import flows for plugins:
+  - path-first import from an explicit plugin root
+  - later, platform-located import from known local development paths
+- extend restore mapping and reverse normalization for emitted plugin outputs
+- surface plugin bundle health in `status`
+- validate and repair emitted plugin outputs in `doctor`
+- include plugin directories in `remove --clean` when project-scoped plugins exist
+
+Design rule:
+- `refresh` re-emits canonical plugin bundles already owned by `dot-agents`
+- `import` adopts external platform-native plugin layouts into canonical storage
+
+Risk:
+- reverse import is the hardest part of plugin support and should be conservative by default
+
+Implemented:
+- plugin-native root detection in `add`
+- OpenCode plugin import/refresh normalization and restore mapping
+- package-plugin import canonicalization for representable Claude/Cursor/Codex/Copilot layouts
+- conservative dedicated-root reverse mapping in `import`/`refresh` for emitted `.claude-plugin/*` and `.cursor-plugin/*` overlay files into canonical `platforms/<platform>/...`
+- import candidate scanning now picks up canonicalizable package-plugin files even when they do not pass through the legacy flat path map first
+- manifest-declared direct Codex/Copilot package paths now import canonically without relying on dedicated package roots:
+  - Codex `skills/`, `hooks`, `mcpServers`, and `apps` targets normalize into the canonical plugin bundle
+  - Copilot `agents/`, `skills/`, `commands/`, `hooks`, and `mcpServers` targets normalize into the canonical plugin bundle
+  - `restore` applies the same canonicalization when replaying active resource backups
+  - legacy fallback import is suppressed for unresolved package-manifest/root-file collisions so package manifests do not degrade into generic `settings/<project>/...` files
+- documented component-discovery behavior now backs the conservative boundary:
+  - Cursor plugins load recognized components from default directories or manifest-declared paths, not arbitrary undeclared root overlays
+  - Claude plugin docs describe the same component-first loading model and path rules
+- package/OpenCode plugin observability in `status` and `doctor`
+- plugin project dir cleanup in `remove --clean`
+
+Still open:
+- ambiguous undeclared repo-root package overlay reverse mapping for Codex/Copilot remains intentionally unsupported by default
+- broader direct platform import ergonomics beyond manifest-declared component paths remains deferred until a non-lossy rule exists
+
+### Phase 5C: OpenCode native plugin support
+Status: Completed
+
+Worker B owned files:
+- `internal/platform/opencode.go`
+- OpenCode plugin tests under `internal/platform/`
+
+Scope:
+- emit canonical `kind: native` plugin bundles into `.opencode/plugins/<plugin-name>/...`
+- optionally render `.opencode/package.json`
+- preserve npm plugin activation in `settings/{scope}/opencode.json`
+- support project and user scope emission where the platform supports it
+
+Implemented:
+- OpenCode native plugin emission from canonical `plugins/<scope>/<name>/`
+- project and global plugin tree cleanup
+- OpenCode plugin import/refresh mapping
+- OpenCode plugin visibility in `status` and `doctor`
+
+Still deferred inside this phase:
+- `.opencode/package.json` rendering
+- npm plugin activation wiring in `opencode.json`
+
+Why first:
+- OpenCode maps most directly to the current link/render model
+
+### Phase 5D: Package plugin emitters
+Status: Completed
+
+Worker A owned files:
+- `internal/platform/claude.go`
+- `internal/platform/cursor.go`
+
+Worker B owned files:
+- `internal/platform/codex.go`
+
+Worker C owned files:
+- `internal/platform/copilot.go`
+
+Scope:
+- emit vendor package manifests from canonical `PLUGIN.yaml`
+- emit bundled `resources/`
+- copy or link plugin-owned `files/`
+- merge `platforms/<platform>/` override content
+
+Initial simplification:
+- assume one package plugin per emitted repo target in V1
+
+Implemented:
+- Claude package plugin emission to `.claude-plugin/`
+- Cursor package plugin emission to `.cursor-plugin/`
+- Codex package plugin emission to `.codex-plugin/` plus repo-root assets
+- Copilot package plugin emission to repo-root `plugin.json` plus resource trees
+- conservative preferred-scope selection: emit only when exactly one package plugin bundle targets the platform
+
+### Phase 5E: Marketplace generation
+Status: In progress
+
+Coordinator-owned files:
+- shared plugin helper layer under `internal/platform/`
+- `commands/status.go`
+- `commands/explain.go`
+- plugin tests
+
+Platform workers owned files:
+- their assigned platform plugin emitters only
+
+Scope:
+- generate vendor marketplace manifests by scanning canonical plugin bundles in scope
+- do not create a separate canonical marketplace bucket
+- support:
+  - Claude `.claude-plugin/marketplace.json`
+  - Cursor `.cursor-plugin/marketplace.json`
+  - Codex `.agents/plugins/marketplace.json`
+  - Copilot `marketplace.json`
+
+Implemented:
+- Claude `.claude-plugin/marketplace.json`
+- Cursor `.cursor-plugin/marketplace.json`
+- Codex `.agents/plugins/marketplace.json`
+- Copilot `.github/plugin/marketplace.json`
+- marketplace/plugin output visibility in command health/audit views (`status`/`doctor`)
+- conservative marketplace import canonicalization for representable package layouts
+- marketplace-specific command-layer visibility updates in `commands/explain.go`
+- direct package-path import now uses the package manifest as the stronger identity hint before consulting marketplace fallbacks for Codex/Copilot roots
+
+Still open:
+- broader marketplace-aware reverse mapping behavior where source layouts are ambiguous
+
+### Phase 5F: Manifest portability
+Status: Completed
+
+Coordinator-owned files:
+- `internal/config/agentsrc.go`
+- `internal/config/agentsrc_test.go`
+- `commands/install.go`
+- `commands/agentsrc_mutations_test.go`
+
+Scope:
+- plugins must land in `.agentsrc.json` as part of first-class plugin support
+- add a plugin field to `.agentsrc.json`
+- teach `install` to resolve canonical plugin bundles from sources
+- teach `install --generate` to detect plugin bundles and write them into the manifest
+
+Delivery note:
+- manifest portability is required in the first-class rollout plan and should land in the immediately following wave after the first canonical/emitter pass, not be deferred beyond that
+
+Implemented:
+- `.agentsrc.json` `plugins` field
+- plugin detection in `install --generate`
+- plugin resolution in `install`
+
+### Phase 5G: Bash parity
+Status: In progress
+
+Start only after the Go plugin behavior is stable.
+
+Coordinator-owned bash files:
+- `src/lib/commands/init.sh`
+- `src/lib/commands/import.sh`
+- `src/lib/commands/refresh.sh`
+- `src/lib/commands/status.sh`
+- `src/lib/commands/doctor.sh`
+- `src/lib/commands/remove.sh`
+- `src/lib/utils/resource-restore-map.sh`
+
+Platform worker bash files:
+- Worker A: `src/lib/platforms/cursor.sh`, `src/lib/platforms/claude-code.sh`
+- Worker B: `src/lib/platforms/opencode.sh`, `src/lib/platforms/codex.sh`
+- Worker C: `src/lib/platforms/github-copilot.sh`
+
+Implemented:
+- plugin restore-map support for:
+  - `.opencode/plugins/<name>/<path>` -> `plugins/<project>/<name>/files/<path>`
+  - canonical `plugins/...` pass-through
+- plugin import scanning for `.opencode/plugins` in bash import flow
+- additive plugin root visibility in bash `status` and `doctor`
+- plugin project dir removal in bash `remove --clean` (`~/.agents/plugins/<project>/`)
+- canonical `hooks/` and `plugins/` project bucket creation in bash add/setup flows
+- bash status now surfaces canonical plugin store summary and per-project emitted package plugin roots
+- bash active-backup detection now recognizes package-plugin roots for dedicated package platforms and Copilot/Codex package manifests
+
+Still open:
+- bash package-plugin manifest synthesis/import beyond conservative non-lossy mappings
+- any additional bash parity for package-platform reverse mapping not safely representable
+
+### Plugin-specific impacted paths
+
+These paths should be considered part of the plugin rollout surface from the start:
+
+- `commands/init.go`
+- `commands/add.go`
+- `commands/import.go`
+- `commands/refresh.go`
+- `commands/status.go`
+- `commands/doctor.go`
+- `commands/remove.go`
+- `commands/explain.go`
+- `commands/install.go`
+- `internal/config/agentsrc.go`
+- `internal/platform/opencode.go`
+- `internal/platform/claude.go`
+- `internal/platform/cursor.go`
+- `internal/platform/codex.go`
+- `internal/platform/copilot.go`
+- `src/lib/commands/import.sh`
+- `src/lib/commands/status.sh`
+- `src/lib/commands/doctor.sh`
+- `src/lib/commands/remove.sh`
+- `src/lib/utils/resource-restore-map.sh`
 
 ## Interfaces and Ownership Rules
 
@@ -284,3 +543,27 @@ Ownership rules for parallel work:
 - Stage 1 covers only resources already implemented in some form today.
 - `docs/PLATFORM_DIRS_DOCS.md` is the target architecture source of truth when resolving path-precedence disputes.
 - If Codex/OpenCode native agent formats require lossy transforms, Stage 1 may keep compat outputs first and defer full native transform completeness to the Stage 3 integration pass, but the shared emitter hook points must exist in Phase 1.
+
+## Next 3 Actions
+
+1. Define the remaining reverse-import boundary for ambiguous repo-root package layouts:
+   - decide whether Codex/Copilot undeclared root overlay files get an explicit opt-in import path
+   - keep default import/refresh behavior conservative until that contract exists
+   - continue to treat Cursor/Claude undeclared root overlays as out of scope for canonical reverse import under their documented component-discovery rules
+2. Broaden direct platform import ergonomics:
+   - move beyond current manifest-declared path adoption where the source layout is unambiguous
+   - keep lossy decomposition out of `PLUGIN.yaml`
+3. Finish the documented bash deferral story:
+   - keep package-manifest synthesis/import explicitly deferred unless a non-lossy contract is defined
+   - add only additional parity that is provably safe under the same conservative rule
+
+### Evidence Notes (2026-03-30)
+
+- Cursor plugin docs:
+  - `https://cursor.com/docs/plugins.md`
+  - `https://cursor.com/docs/reference/plugins.md`
+  - documents automatic component discovery (`rules/`, `skills/`, `agents/`, `commands/`, `hooks/hooks.json`, `mcp.json`) and manifest path overrides, with relative-path constraints
+- Claude plugin docs:
+  - `https://docs.claude.com/en/docs/claude-code/plugins`
+  - `https://docs.claude.com/en/docs/claude-code/plugins-reference`
+  - documents component path behavior and plugin-root-relative path rules

@@ -483,6 +483,8 @@ create_project_dirs_silent() {
   mkdir -p "$agents_home/mcp/$project"
   mkdir -p "$agents_home/skills/$project"
   mkdir -p "$agents_home/agents/$project"
+  mkdir -p "$agents_home/hooks/$project"
+  mkdir -p "$agents_home/plugins/$project"
 }
 
 # Create project directories in ~/.agents/ (verbose version)
@@ -496,6 +498,8 @@ create_project_dirs() {
     "$agents_home/mcp/$project"
     "$agents_home/skills/$project"
     "$agents_home/agents/$project"
+    "$agents_home/hooks/$project"
+    "$agents_home/plugins/$project"
   )
 
   for dir in "${dirs[@]}"; do

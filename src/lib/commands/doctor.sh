@@ -156,6 +156,68 @@ run_doctor_text() {
   done < <(platform_ids)
 
   echo ""
+  log_section "Plugins"
+
+  local plugin_store="$AGENTS_HOME/plugins"
+  if [ -d "$plugin_store" ]; then
+    local bundle_count
+    bundle_count=$(find "$plugin_store" -name PLUGIN.yaml -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$bundle_count" -gt 0 ]; then
+      echo -e "  ${GREEN}✓${NC} Canonical plugin store: $bundle_count bundle(s)"
+    else
+      echo -e "  ${YELLOW}○${NC} Canonical plugin store: empty"
+    fi
+  else
+    echo -e "  ${GRAY}○${NC} Canonical plugin store: not found"
+  fi
+
+  local opencode_plugins="$HOME/.config/opencode/plugins"
+  if [ -d "$opencode_plugins" ]; then
+    local opencode_count=0
+    for entry in "$opencode_plugins"/*; do
+      [ -e "$entry" ] || continue
+      ((opencode_count++)) || true
+    done
+    if [ "$opencode_count" -gt 0 ]; then
+      echo -e "  ${GREEN}✓${NC} OpenCode ~/.config/opencode/plugins: $opencode_count bundle root(s)"
+    else
+      echo -e "  ${YELLOW}○${NC} OpenCode ~/.config/opencode/plugins: empty"
+    fi
+  else
+    echo -e "  ${GRAY}○${NC} OpenCode ~/.config/opencode/plugins: not found"
+  fi
+
+  if [ -f "$AGENTS_HOME/config.json" ] && has_jq; then
+    local projects
+    projects=$(jq -r '.projects | keys[]' "$AGENTS_HOME/config.json" 2>/dev/null)
+    for project in $projects; do
+      local project_path
+      project_path=$(jq -r ".projects[\"$project\"].path" "$AGENTS_HOME/config.json")
+      project_path=$(expand_path "$project_path")
+      [ -d "$project_path" ] || continue
+
+      local package_roots=0
+      for rel in ".claude-plugin/plugin.json" ".claude-plugin/marketplace.json" \
+        ".cursor-plugin/plugin.json" ".cursor-plugin/marketplace.json" \
+        ".codex-plugin/plugin.json" ".agents/plugins/marketplace.json" \
+        "plugin.json" ".github/plugin/marketplace.json"; do
+        [ -e "$project_path/$rel" ] && ((package_roots++)) || true
+      done
+      if [ -d "$project_path/.opencode/plugins" ]; then
+        local opencode_project_count=0
+        for entry in "$project_path/.opencode/plugins"/*; do
+          [ -e "$entry" ] && ((opencode_project_count++)) || true
+        done
+        [ "$opencode_project_count" -gt 0 ] && package_roots=$((package_roots + 1)) || true
+      fi
+
+      if [ "$package_roots" -gt 0 ]; then
+        echo -e "  ${CYAN}$project${NC}: $package_roots package plugin root(s)"
+      fi
+    done
+  fi
+
+  echo ""
   log_section "Global Settings"
 
   # Check Claude Code global settings status

@@ -87,6 +87,7 @@ func runRemove(projectName string, cleanDirs bool) error {
 			"  ~/.agents/mcp/"+projectName+"/",
 			"  ~/.agents/skills/"+projectName+"/",
 			"  ~/.agents/agents/"+projectName+"/",
+			"  ~/.agents/plugins/"+projectName+"/",
 		)
 	}
 
@@ -150,6 +151,7 @@ func removeProjectDirs(project string) {
 		agentsHome + "/mcp/" + project,
 		agentsHome + "/skills/" + project,
 		agentsHome + "/agents/" + project,
+		agentsHome + "/plugins/" + project,
 	}
 	for _, d := range dirs {
 		os.RemoveAll(d)

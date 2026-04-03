@@ -7,16 +7,18 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 )
 
 const (
-	testProject         = "myproject"
-	testSourceTypeLocal = "local"
-	testHookPreToolUse  = "PreToolUse"
-	testHookPostToolUse = "PostToolUse"
-	errFmtGenerateRC    = "GenerateAgentsRC: %v"
-	testSkillMarkerFile = "SKILL" + ".md"
-	testRealSkillName   = "real" + "-skill"
+	testProject          = "myproject"
+	testSourceTypeLocal  = "local"
+	testHookPreToolUse   = "PreToolUse"
+	testHookPostToolUse  = "PostToolUse"
+	errFmtGenerateRC     = "GenerateAgentsRC: %v"
+	testSkillMarkerFile  = "SKILL" + ".md"
+	testPluginMarkerFile = "PLUGIN" + ".yaml"
+	testRealSkillName    = "real" + "-skill"
 )
 
 // ── StringsOrBool ────────────────────────────────────────────────────────────
@@ -283,6 +285,7 @@ func TestAgentsRCSaveLoadRoundtrip(t *testing.T) {
 		Project:  testProject,
 		Skills:   []string{"skill-a", "skill-b"},
 		Agents:   []string{"agent-x"},
+		Plugins:  []string{"plugin-a"},
 		Rules:    []string{"global", "project"},
 		Hooks:    StringsOrBool{Names: []string{testHookPreToolUse, testHookPostToolUse}},
 		MCP:      StringsOrBool{All: true},
@@ -292,6 +295,7 @@ func TestAgentsRCSaveLoadRoundtrip(t *testing.T) {
 			{Type: "git", URL: "https://github.com/example/repo.git", Ref: "main"},
 		},
 	}
+	orig.SetRefreshMetadata("1.2.3", "abcdef123456", "v1.2.3", time.Date(2026, time.March, 31, 12, 0, 0, 0, time.UTC))
 
 	if err := orig.Save(tmp); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -311,6 +315,9 @@ func TestAgentsRCSaveLoadRoundtrip(t *testing.T) {
 	if !reflect.DeepEqual(got.Agents, orig.Agents) {
 		t.Errorf("Agents: got %v, want %v", got.Agents, orig.Agents)
 	}
+	if !reflect.DeepEqual(got.Plugins, orig.Plugins) {
+		t.Errorf("Plugins: got %v, want %v", got.Plugins, orig.Plugins)
+	}
 	if !reflect.DeepEqual(got.Rules, orig.Rules) {
 		t.Errorf("Rules: got %v, want %v", got.Rules, orig.Rules)
 	}
@@ -325,6 +332,12 @@ func TestAgentsRCSaveLoadRoundtrip(t *testing.T) {
 	}
 	if len(got.Sources) != 2 || got.Sources[1].URL != orig.Sources[1].URL {
 		t.Errorf("Sources: got %+v, want %+v", got.Sources, orig.Sources)
+	}
+	if got.Refresh == nil {
+		t.Fatal("Refresh: got nil, want populated metadata")
+	}
+	if !reflect.DeepEqual(*got.Refresh, *orig.Refresh) {
+		t.Errorf("Refresh: got %+v, want %+v", *got.Refresh, *orig.Refresh)
 	}
 }
 
@@ -371,6 +384,10 @@ func agentsHomeFixture(t *testing.T) string {
 
 	// Agents: global/agent-global
 	writeFile(filepath.Join(mkdirAll("agents", "global", "agent-global"), "AGENT.md"), "# agent")
+
+	// Plugins: global/plugin-global + project/plugin-proj
+	writeFile(filepath.Join(mkdirAll("plugins", "global", "plugin-global"), testPluginMarkerFile), "kind: package")
+	writeFile(filepath.Join(mkdirAll("plugins", testProject, "plugin-proj"), testPluginMarkerFile), "kind: native")
 
 	// Rules: global file + project file
 	writeFile(filepath.Join(home, "rules", "global", "base.md"), "# rule")
@@ -426,6 +443,22 @@ func TestGenerateAgentsRCAgents(t *testing.T) {
 
 	if !reflect.DeepEqual(rc.Agents, []string{"agent-global"}) {
 		t.Errorf("Agents: got %v, want [agent-global]", rc.Agents)
+	}
+}
+
+func TestGenerateAgentsRCPlugins(t *testing.T) {
+	home := agentsHomeFixture(t)
+	t.Setenv("AGENTS_HOME", home)
+
+	rc, err := GenerateAgentsRC(testProject, t.TempDir())
+	if err != nil {
+		t.Fatalf(errFmtGenerateRC, err)
+	}
+
+	sort.Strings(rc.Plugins)
+	want := []string{"plugin-global", "plugin-proj"}
+	if !reflect.DeepEqual(rc.Plugins, want) {
+		t.Errorf("Plugins: got %v, want %v", rc.Plugins, want)
 	}
 }
 
@@ -631,10 +664,12 @@ func TestAgentsRCJSONShape(t *testing.T) {
 		Version: 1,
 		Project: "proj",
 		Skills:  []string{"s1"},
+		Plugins: []string{"p1"},
 		Hooks:   StringsOrBool{Names: []string{testHookPreToolUse}},
 		MCP:     StringsOrBool{All: false},
 		Sources: []Source{{Type: testSourceTypeLocal}},
 	}
+	rc.SetRefreshMetadata("1.0.0", "abc123", "v1.0.0", time.Date(2026, time.March, 31, 5, 18, 11, 0, time.UTC))
 	if err := rc.Save(tmp); err != nil {
 		t.Fatal(err)
 	}
@@ -649,6 +684,9 @@ func TestAgentsRCJSONShape(t *testing.T) {
 	if _, ok := raw["hooks"].([]any); !ok {
 		t.Errorf("hooks should be JSON array, got %T", raw["hooks"])
 	}
+	if _, ok := raw["plugins"].([]any); !ok {
+		t.Errorf("plugins should be JSON array, got %T", raw["plugins"])
+	}
 	// mcp should be false (not enabled)
 	if v, ok := raw["mcp"].(bool); !ok || v {
 		t.Errorf("mcp should be JSON false, got %v", raw["mcp"])
@@ -656,5 +694,12 @@ func TestAgentsRCJSONShape(t *testing.T) {
 	// $schema present
 	if raw["$schema"] == nil {
 		t.Error("$schema should be present")
+	}
+	refresh, ok := raw["refresh"].(map[string]any)
+	if !ok {
+		t.Fatalf("refresh should be JSON object, got %T", raw["refresh"])
+	}
+	if refresh["refreshedAt"] != "2026-03-31T05:18:11Z" {
+		t.Errorf("refresh.refreshedAt = %v, want 2026-03-31T05:18:11Z", refresh["refreshedAt"])
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/NikashPrakash/dot-agents/internal/config"
 	"github.com/NikashPrakash/dot-agents/internal/links"
@@ -57,21 +56,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	ui.Step("Creating directories and files...")
 
-	dirs := []string{
-		agentsHome,
-		filepath.Join(agentsHome, "resources"),
-		filepath.Join(agentsHome, "rules", "global"),
-		filepath.Join(agentsHome, "settings", "global"),
-		filepath.Join(agentsHome, "mcp", "global"),
-		filepath.Join(agentsHome, "skills", "global", "agent-start"),
-		filepath.Join(agentsHome, "skills", "global", "agent-handoff"),
-		filepath.Join(agentsHome, "skills", "global", "self-review"),
-		filepath.Join(agentsHome, "agents", "global"),
-		filepath.Join(agentsHome, "hooks", "global"),
-		filepath.Join(agentsHome, "scripts"),
-		filepath.Join(agentsHome, "local"),
-	}
-	for _, d := range dirs {
+	for _, d := range initCanonicalDirs(agentsHome) {
 		if err := os.MkdirAll(d, 0755); err != nil {
 			return fmt.Errorf("creating %s: %w", d, err)
 		}
@@ -130,16 +115,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Create README.md
 	readmePath := filepath.Join(agentsHome, "README.md")
 	if _, err := os.Stat(readmePath); os.IsNotExist(err) {
-		content := "# ~/.agents/\n\nManaged by [dot-agents](https://github.com/NikashPrakash/dot-agents).\n\n" +
-			"## Stage 1 Canonical Buckets\n\n" +
-			"- `rules/` for shared instructions\n" +
-			"- `settings/` for platform settings and current Cursor ignore support\n" +
-			"- `mcp/` for MCP configs\n" +
-			"- `skills/` for canonical skills\n" +
-			"- `agents/` for canonical agent definitions\n" +
-			"- `hooks/` for canonical hook configs\n" +
-			"- `resources/` for backups and restore state\n"
-		os.WriteFile(readmePath, []byte(content), 0644)
+		os.WriteFile(readmePath, []byte(initReadmeContent()), 0644)
 	}
 
 	ui.Bullet("ok", "Created template files")
@@ -195,17 +171,33 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// refreshMarkerContent generates the .agents-refresh marker file content.
-func refreshMarkerContent(version, commit, describe string) []byte {
-	now := time.Now().UTC().Format(time.RFC3339)
-	content := "# dot-agents refresh marker — do not edit\n"
-	content += "version=" + version + "\n"
-	if commit != "" {
-		content += "commit=" + commit + "\n"
+func initCanonicalDirs(agentsHome string) []string {
+	return []string{
+		agentsHome,
+		filepath.Join(agentsHome, "resources"),
+		filepath.Join(agentsHome, "rules", "global"),
+		filepath.Join(agentsHome, "settings", "global"),
+		filepath.Join(agentsHome, "mcp", "global"),
+		filepath.Join(agentsHome, "skills", "global", "agent-start"),
+		filepath.Join(agentsHome, "skills", "global", "agent-handoff"),
+		filepath.Join(agentsHome, "skills", "global", "self-review"),
+		filepath.Join(agentsHome, "agents", "global"),
+		filepath.Join(agentsHome, "hooks", "global"),
+		filepath.Join(agentsHome, "plugins", "global"),
+		filepath.Join(agentsHome, "scripts"),
+		filepath.Join(agentsHome, "local"),
 	}
-	if describe != "" {
-		content += "describe=" + describe + "\n"
-	}
-	content += "refreshed_at=" + now + "\n"
-	return []byte(content)
+}
+
+func initReadmeContent() string {
+	return "# ~/.agents/\n\nManaged by [dot-agents](https://github.com/NikashPrakash/dot-agents).\n\n" +
+		"## Canonical Buckets\n\n" +
+		"- `rules/` for shared instructions\n" +
+		"- `settings/` for platform settings and current Cursor ignore support\n" +
+		"- `mcp/` for MCP configs\n" +
+		"- `skills/` for canonical skills\n" +
+		"- `agents/` for canonical agent definitions\n" +
+		"- `hooks/` for canonical hook configs\n" +
+		"- `plugins/` for canonical plugin bundles (`PLUGIN.yaml`, `resources/`, `files/`, `platforms/`)\n" +
+		"- `resources/` for backups and restore state\n"
 }

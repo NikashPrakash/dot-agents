@@ -9,7 +9,7 @@ The cross-platform matrix below counts only officially documented project-level 
 
 ## Official Platform Locations
 
-Official docs checked on 2026-03-29.
+Official docs checked on 2026-03-30.
 
 ### Cursor
 
@@ -18,6 +18,7 @@ Official docs checked on 2026-03-29.
 - [Subagents](https://cursor.com/docs/subagents): project subagents can live in `.cursor/agents/`, `.claude/agents/`, or `.codex/agents/`; user-level subagents can live in `~/.cursor/agents/`, `~/.claude/agents/`, or `~/.codex/agents/`. Cursor documents `.cursor/agents/` as the precedence winner when names collide.
 - [MCP](https://cursor.com/docs/mcp): project MCP config can live in `.cursor/mcp.json`; user-level config can live in `~/.cursor/mcp.json`.
 - [Hooks](https://cursor.com/docs/hooks): hooks live in `.cursor/hooks.json` or `~/.cursor/hooks.json`.
+- [Plugins](https://cursor.com/docs/plugins.md) and the [Cursor Marketplace](https://cursor.com/marketplace/): Cursor now has a first-party plugin system. Plugins bundle rules, skills, agents, commands, MCP servers, and hooks. A plugin package uses a `.cursor-plugin/plugin.json` manifest; multi-plugin repositories can add `.cursor-plugin/marketplace.json`. Cursor also documents local testing from `~/.cursor/plugins/local/<plugin-name>`.
 
 ### Claude Code
 
@@ -26,6 +27,8 @@ Official docs checked on 2026-03-29.
 - [Sub-agents](https://code.claude.com/docs/en/sub-agents): project subagents live in `.claude/agents/`; user-level subagents live in `~/.claude/agents/`.
 - [MCP](https://code.claude.com/docs/en/mcp): project MCP config can live in `.mcp.json`; user-level config lives in `~/.claude.json`.
 - [Hooks](https://code.claude.com/docs/en/hooks): hooks are configured in `.claude/settings.json`, `.claude/settings.local.json`, and `~/.claude/settings.json`.
+- [Plugins](https://code.claude.com/docs/en/plugins.md): Claude Code now has a first-party plugin system. Plugins can bundle custom commands, agents, hooks, Skills, and MCP servers. A plugin package uses a `.claude-plugin/plugin.json` manifest and can include component directories such as `commands/`, `agents/`, `skills/`, and hooks or MCP configuration.
+- [Plugin marketplaces](https://code.claude.com/docs/en/plugin-marketplaces.md): Claude Code supports plugin marketplaces. Marketplaces are defined by `.claude-plugin/marketplace.json`, can be added from GitHub, arbitrary git URLs, local paths, direct JSON URLs, and can be configured in `.claude/settings.json` through `extraKnownMarketplaces` and `enabledPlugins` for team rollout.
 
 ### Codex (OpenAI)
 
@@ -34,6 +37,7 @@ Official docs checked on 2026-03-29.
 - [Subagents](https://developers.openai.com/codex/subagents): Codex documents subagent definition files under `.codex/agents/*.toml`.
 - [Config and MCP](https://developers.openai.com/codex/config-reference/): project config lives in `.codex/config.toml`; user-level config lives in `~/.codex/config.toml`. MCP servers are configured inside that TOML.
 - [Hooks](https://developers.openai.com/codex/hooks): hooks live in `.codex/hooks.json` and `~/.codex/hooks.json`.
+- [Plugins](https://developers.openai.com/codex/plugins/) and [Build plugins](https://developers.openai.com/codex/plugins/build): Codex now has a first-party plugin system. The plugin browser exists in the app and CLI (`/plugins`). Plugins bundle skills, apps, and MCP servers. Plugin packages use a required `.codex-plugin/plugin.json` manifest and can also include `skills/`, `.app.json`, `.mcp.json`, and `assets/`. For local development and self-hosted catalogs, Codex documents repo and personal marketplaces at `.agents/plugins/marketplace.json` and `~/.agents/plugins/marketplace.json`, with plugin folders commonly stored under `./plugins/` or `~/.codex/plugins/`.
 
 ### OpenCode
 
@@ -43,6 +47,8 @@ Official docs checked on 2026-03-29.
 - [MCP servers](https://opencode.ai/docs/mcp-servers/): project MCP lives in `opencode.json` or `opencode.jsonc`; user-level MCP lives in `~/.config/opencode/opencode.json`.
 - [Commands](https://opencode.ai/docs/commands/): project commands live in `.opencode/commands/*.md`; user-level commands live in `~/.config/opencode/commands/*.md`.
 - [Custom tools](https://opencode.ai/docs/custom-tools/): project tools live in `.opencode/tools/`; user-level tools live in `~/.config/opencode/tools/`.
+- [Plugins](https://opencode.ai/docs/plugins/): local plugins are JavaScript or TypeScript files in `.opencode/plugins/`; global plugins live in `~/.config/opencode/plugins/`. OpenCode also loads npm plugins declared in the `plugin` array inside `opencode.json` or `~/.config/opencode/opencode.json`, installs npm dependencies with Bun, caches packages under `~/.cache/opencode/node_modules/`, and loads sources in this order: global config, project config, global plugin dir, project plugin dir.
+- [Plugin dependencies](https://opencode.ai/docs/plugins/): local plugins and custom tools can depend on npm packages through `.opencode/package.json` or `~/.config/opencode/package.json`. The docs state that OpenCode runs `bun install` at startup for these config-root manifests.
 - OpenCode does not currently document a separate hooks file in the same style as Cursor, Claude Code, Codex, or GitHub Copilot.
 
 ### GitHub Copilot
@@ -52,6 +58,7 @@ Official docs checked on 2026-03-29.
 - [Custom agents](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/create-custom-agents), [Copilot CLI custom agents](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli), and the [Copilot CLI command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference): repository custom agents live under `.github/agents/`. GitHub CLI also documents `.claude/agents/` compatibility plus user-level `~/.copilot/agents/` and `~/.claude/agents/`.
 - [Hooks](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/use-hooks): hook files live in `.github/hooks/*.json`. The same docs note that Copilot CLI loads hooks from the current working directory.
 - [Coding-agent MCP](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/extend-coding-agent-with-mcp), [Copilot CLI MCP](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers), and the [Copilot CLI command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference): coding-agent MCP can be configured in repository settings on GitHub.com. Copilot CLI also documents repository `.github/mcp.json`, workspace `.mcp.json` and `.vscode/mcp.json`, devcontainer `.devcontainer/devcontainer.json`, and user-level `~/.copilot/mcp-config.json`.
+- [Copilot CLI plugins overview](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins), [find/install plugins](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-finding-installing), [create plugins](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/copilot-cli/customize-copilot/plugins-creating), and [create marketplaces](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/copilot-cli/customize-copilot/plugins-marketplace): Copilot CLI now has installable plugins and plugin marketplaces. Plugins can be installed from marketplaces, repositories, or local paths; installed copies live under `~/.copilot/state/installed-plugins/`. A plugin package requires a root `plugin.json` manifest and can contain `agents/`, `skills/`, `hooks.json`, and `.mcp.json`. GitHub also documents direct repository installs when `plugin.json` is at the repository root, in `.github/plugin/`, or in `.claude-plugin/`. Marketplaces use `marketplace.json` as the required file and can live on GitHub, other git hosts, or local/shared filesystems.
 
 ## Canonical `~/.agents` Storage Policy
 
@@ -72,10 +79,10 @@ This section is a recommended storage model, not a statement that the current co
 | MCP and config | `mcp/{scope}/mcp.json` | 1. No true compat winner 2. Translate outward to `.cursor/mcp.json`, `.mcp.json`, `.github/mcp.json` or `.vscode/mcp.json`, `.codex/config.toml`, and `opencode.json` | The storage can be single-source, but the output formats are platform-specific. |
 | Hooks | `hooks/{scope}/hooks.json` or a canonical hook bundle under `hooks/{scope}/` | 1. No true compat winner 2. Translate to `.cursor/hooks.json`, `.codex/hooks.json`, `.github/hooks/*.json`, and Claude settings-backed hooks | Hooks need an internal normalized schema if they are going to stay truly single-source. See `docs/CANONICAL_HOOKS_DESIGN.md` for the proposed `HOOK.yaml` bundle model and shared emitter contract. |
 | Commands | `commands/{scope}/*.md` | 1. No compat winner 2. Translate to `.cursor/commands/`, `.claude/commands/`, and `.opencode/commands/` | Claude custom commands are legacy, but the resource type is still useful. |
+| Plugins | Platform-specific plugin buckets rather than one shared canonical shape | 1. Cursor, Claude, Codex, and Copilot all expose repo-manifest plugin package surfaces 2. OpenCode-native local plugin files belong in `.opencode/plugins/` | "Plugins" no longer means one thing across platforms. Cursor, Claude, Codex, and Copilot use installable plugin packages with manifests, while OpenCode uses executable local JS/TS plugins plus config-based npm plugins. |
 | Output styles | `output-styles/{scope}/*.md` | 1. No compat winner 2. Wire to `.claude/output-styles/` | Claude-specific today. |
 | Ignore files | `ignore/{scope}/cursorignore` and `ignore/{scope}/cursorindexingignore` | 1. No compat winner 2. Wire to Cursor root ignore files | Cursor-specific today. |
 | Modes | `modes/{scope}/*.md` | 1. No compat winner 2. Wire to `.opencode/modes/` | OpenCode-specific today. |
-| Plugins | `plugins/{scope}/` | 1. No compat winner 2. Wire to `.opencode/plugins/` | OpenCode-specific today. |
 | Themes | `themes/{scope}/*.json` | 1. No compat winner 2. Wire to `.opencode/themes/` | OpenCode-specific today. |
 | Prompt files | `prompts/{scope}/*.prompt.md` | 1. No compat winner 2. Wire to `.github/prompts/` | GitHub Copilot-specific today. |
 
@@ -92,7 +99,12 @@ These are additional official resources that `dot-agents` could plausibly manage
 | Claude Code | Status line scripts | [Customize status line](https://code.claude.com/docs/en/statusline): script path configured through `statusLine` in settings; docs examples use `~/.claude/statusline.sh` | Possible, but secondary. This is settings-backed rather than a dedicated resource directory. |
 | Codex | No extra standalone repo resource found | Inference from the current official Codex docs reviewed above | I did not find another dedicated repo resource directory beyond AGENTS, skills, subagents, config, and hooks. Current extra behavior appears to live inside `.codex/config.toml` rather than separate resource folders. |
 | OpenCode | Modes | [Modes](https://opencode.ai/docs/modes/): `.opencode/modes/*.md`, `~/.config/opencode/modes/*.md` | Strong candidate for sharable plan/review/build presets. |
-| OpenCode | Plugins | [Plugins](https://opencode.ai/docs/plugins/): `.opencode/plugins/`, `~/.config/opencode/plugins/` | Strong extension point for event hooks and custom runtime behavior. |
+| Cursor | Plugins | [Plugins](https://cursor.com/docs/plugins.md) and [Cursor Marketplace](https://cursor.com/marketplace/): `.cursor-plugin/plugin.json`, optional `.cursor-plugin/marketplace.json`, local testing from `~/.cursor/plugins/local/` | Strong candidate. Cursor now documents both a plugin package manifest and marketplace metadata, making it closer to Claude and Codex than to a pure marketplace-only model. |
+| Claude Code | Plugins | [Plugins](https://code.claude.com/docs/en/plugins.md) and [Plugin marketplaces](https://code.claude.com/docs/en/plugin-marketplaces.md): `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, optional `commands/`, `agents/`, `skills/`, hook and MCP config, team settings in `.claude/settings.json` | Strong candidate. Claude now has both a plugin package format and a repo-aware marketplace format, making it one of the best fits for `dot-agents` plugin authoring and repo metadata support. |
+| Codex | Plugins | [Plugins](https://developers.openai.com/codex/plugins/) and [Build plugins](https://developers.openai.com/codex/plugins/build): `.codex-plugin/plugin.json`, optional `skills/`, `.app.json`, `.mcp.json`, repo or personal `.agents/plugins/marketplace.json` | Strong candidate. This is the best documented repo-aware plugin system among the platforms checked because it has a manifest format plus repo-scoped marketplace metadata. |
+| OpenCode | Plugins | [Plugins](https://opencode.ai/docs/plugins/): `.opencode/plugins/`, `~/.config/opencode/plugins/`, plus npm plugins listed in `opencode.json` | Strong extension point for runtime behavior. Unlike skills or commands, plugins can subscribe to OpenCode events, mutate tool execution, and register custom tools. |
+| OpenCode | Plugin dependency manifest | [Plugins](https://opencode.ai/docs/plugins/): `.opencode/package.json`, `~/.config/opencode/package.json` | Important companion resource for local plugins and custom tools because the docs say Bun installs these dependencies automatically at startup. |
+| GitHub Copilot CLI | Plugins | [About CLI plugins](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/about-cli-plugins), [find/install plugins](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-finding-installing), [create plugins](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/copilot-cli/customize-copilot/plugins-creating), and [create marketplaces](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/copilot-cli/customize-copilot/plugins-marketplace): `plugin.json` at repo root, `.github/plugin/`, or `.claude-plugin/`; marketplace requires `marketplace.json`; optional `agents/`, `skills/`, `hooks.json`, `.mcp.json` | Strong candidate. Copilot is more repo-aware than a simple install cache model: it supports direct installs from local paths or git repos, recognizes multiple repo manifest locations, and has a documented marketplace file format that works from GitHub, other git hosts, or local/shared filesystems. |
 | OpenCode | Themes | [Themes](https://opencode.ai/docs/themes/): `.opencode/themes/*.json`, `~/.config/opencode/themes/*.json` | Worth managing if this repo wants shared terminal theming or branded presets. |
 | GitHub Copilot | Prompt files | [Customization cheat sheet](https://docs.github.com/en/copilot/reference/customization-cheat-sheet) and [Prompt files](https://docs.github.com/en/copilot/tutorials/customization-library/prompt-files): `.github/prompts/*.prompt.md` | Best additional Copilot repo resource. Reusable prompt templates fit this project well. |
 
@@ -109,6 +121,7 @@ This matrix compares official project-level locations only.
 | Hooks | Cursor: `.cursor/hooks.json`; Claude Code: `.claude/settings.json` or `.claude/settings.local.json`; Codex: `.codex/hooks.json`; OpenCode: no dedicated hooks file documented; GitHub Copilot: `.github/hooks/*.json` | No meaningful cross-platform compat path is documented | No consensus | Keep platform-specific hook wiring. |
 | Commands | OpenCode only: `.opencode/commands/*.md` | None | OpenCode only | No cross-platform action needed. |
 | Custom tools | OpenCode only: `.opencode/tools/` | None | OpenCode only | No cross-platform action needed. |
+| Plugins | Cursor: `.cursor-plugin/plugin.json` plus optional `.cursor-plugin/marketplace.json`; Claude Code: `.claude-plugin/plugin.json` plus `.claude-plugin/marketplace.json`; Codex: plugin packages plus `.agents/plugins/marketplace.json`; OpenCode: `.opencode/plugins/` plus npm package references in `opencode.json`; GitHub Copilot CLI: `plugin.json` at root, `.github/plugin/`, or `.claude-plugin/`, plus `marketplace.json` for plugin marketplaces | No single compat path is documented across platforms | No consensus | Treat plugins as multiple platform-specific systems. Cursor, Claude, Codex, OpenCode, and Copilot all expose meaningful repo-adjacent plugin surfaces, but with different manifests, installation flows, and marketplace models. |
 
 ## `dot-agents` Implementation Audit
 
@@ -121,7 +134,7 @@ This section is about the current repo implementation, not upstream platform beh
 | Cursor | `.cursor/rules/`, `.cursor/settings.json`, `.cursor/mcp.json`, `.cursor/hooks.json`, `.cursorignore`, `.claude/agents/` | Cursor-native agents would be `.cursor/agents/`, but both Go and bash implementations currently target `.claude/agents/` for compatibility reuse. The repo already manages `.cursorignore`, but not `.cursorindexingignore` or `.cursor/commands/`. |
 | Claude Code | `.claude/rules/`, `.claude/settings.local.json`, `.mcp.json`, `.claude/agents/`, `.claude/skills/`, `.agents/skills/` | Official Claude skills docs only mention `.claude/skills/`; this repo also mirrors project skills into `.agents/skills/` for shared-tool compatibility. |
 | Codex | `AGENTS.md`, `.codex/config.toml`, `.claude/agents/`, `.agents/skills/` | Codex-native subagents are documented under `.codex/agents/*.toml`, but both Go and bash implementations currently place project agents in `.claude/agents/`. |
-| OpenCode | `opencode.json`, `.opencode/agent/`, `.agents/skills/` | OpenCode-native skills are documented under `.opencode/skills/`, but current Go and bash implementations rely on the `.agents/skills/` compatibility path instead. |
+| OpenCode | `opencode.json`, `.opencode/agent/`, `.agents/skills/` | OpenCode-native skills are documented under `.opencode/skills/`, but current Go and bash implementations rely on the `.agents/skills/` compatibility path instead. The repo does not currently manage `.opencode/plugins/`, `.opencode/package.json`, `.opencode/commands/`, `.opencode/tools/`, `.opencode/modes/`, or `.opencode/themes/`. |
 | GitHub Copilot | `.github/copilot-instructions.md`, `.github/agents/*.agent.md`, `.agents/skills/`, `.vscode/mcp.json`, `.claude/settings.local.json`, and Go-only `.github/hooks/*.json` | `.agents/skills/` and `.vscode/mcp.json` are officially documented Copilot CLI locations, but this repo still skips other official Copilot locations such as `.github/skills/`, `.claude/skills/`, `.github/mcp.json`, and `.mcp.json`. Bash also still lacks `.github/hooks/*.json` output. |
 
 ### Hook Wiring Audit
@@ -135,3 +148,39 @@ Validated from the current Go and bash implementations:
 | Codex | `.codex/hooks.json` | No | No | Both implementations link `AGENTS.md`, `.codex/config.toml`, skills, and agents, but neither creates `.codex/hooks.json`. |
 | GitHub Copilot | `.github/hooks/*.json` and CLI current-working-directory hooks | Partial | Partial | Go links project `.github/hooks/*.json` and also wires Claude-compatible settings. Bash only wires Claude-compatible settings and does not create `.github/hooks/*.json`. |
 | OpenCode | No dedicated hook file documented | No | No | No OpenCode-specific hook handling is implemented here. |
+
+## OpenCode Plugin Model
+
+The OpenCode plugin docs describe a capability that is materially different from the rest of this repo's current "resource linking" model:
+
+- A plugin is executable JavaScript or TypeScript, not markdown content.
+- Plugins can be discovered from project and user directories, or from npm package names declared in config.
+- OpenCode installs dependencies with Bun and caches npm plugin packages separately from the config tree.
+- Plugin hooks run in sequence and can subscribe to runtime events such as `tool.execute.before`, `tool.execute.after`, `shell.env`, `session.*`, `command.executed`, and file or permission events.
+- Plugins can also register custom tools, and plugin tools take precedence over built-in tools when names collide.
+
+Implication for `dot-agents`:
+
+- "Plugin support" should mean OpenCode-native resource management, not a new cross-platform plugin abstraction.
+- The minimum useful scope is local plugin file management under canonical `~/.agents/plugins/{scope}/` and project/user link wiring.
+- npm plugin package names belong to `opencode.json` support, not a new directory abstraction, because that is how OpenCode documents them.
+- `.opencode/package.json` is part of the plugin/custom-tool runtime contract and should be planned alongside plugin files even if custom tools themselves are implemented later.
+
+See also `docs/OPENCODE_PLUGIN_SUPPORT_PLAN.md` for the concrete staged implementation plan.
+For the broader multi-platform rollout, see `docs/PLUGIN_SUPPORT_STRATEGY.md`.
+
+## Cross-Platform Plugin Landscape
+
+Across the current official docs, "plugin support" now breaks into four materially different models:
+
+- Cursor: first-party plugin packages with `.cursor-plugin/plugin.json`, optional `.cursor-plugin/marketplace.json`, and local testing from `~/.cursor/plugins/local/`. Plugins bundle rules, skills, agents, commands, MCP servers, and hooks.
+- Claude Code: first-party plugin packages and plugin marketplaces. Plugins bundle commands, agents, hooks, Skills, and MCP servers, and marketplaces are repo-aware through `.claude-plugin/marketplace.json`.
+- Codex: first-party plugin packages plus repo or personal marketplace catalogs. This is the strongest repo-aware plugin model in the docs checked because Codex documents both package structure and repo-scoped marketplace metadata.
+- OpenCode: native local plugin files in `.opencode/plugins/` plus config-based npm plugin activation.
+- GitHub Copilot CLI: installable plugin packages with a required `plugin.json` manifest, direct repo or local-path installation, marketplace registration from local directories or git repos, and recognition of plugin manifests at repo root, `.github/plugin/`, or `.claude-plugin/`.
+
+Implication for `dot-agents`:
+
+- A single canonical `plugins/` abstraction will be too lossy.
+- The product should likely support plugins in tiers:
+  - Tier 1: Cursor, Claude Code, Codex, OpenCode, and GitHub Copilot CLI, because they all have repo-adjacent plugin package or plugin source surfaces that map onto `dot-agents`.

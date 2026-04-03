@@ -321,6 +321,8 @@ func collectBrokenLinks(name, path, agentsHome string) []brokenLink {
 			}
 		}
 	}
+	broken = append(broken, collectBrokenSymlinkTree(filepath.Join(path, ".claude-plugin"), rel, "claude")...)
+	broken = append(broken, collectBrokenSymlinkTree(filepath.Join(path, ".cursor-plugin"), rel, "cursor")...)
 
 	// Codex AGENTS.md
 	agentsMD := filepath.Join(path, "AGENTS.md")
@@ -333,6 +335,8 @@ func collectBrokenLinks(name, path, agentsHome string) []brokenLink {
 			})
 		}
 	}
+	broken = append(broken, collectBrokenSymlinkTree(filepath.Join(path, ".codex-plugin"), rel, "codex")...)
+	broken = append(broken, collectBrokenSymlinkTree(filepath.Join(path, ".agents", "plugins"), rel, "codex")...)
 
 	// Copilot instructions
 	copilotPath := filepath.Join(path, ".github", "copilot-instructions.md")
@@ -369,6 +373,16 @@ func collectBrokenLinks(name, path, agentsHome string) []brokenLink {
 			})
 		}
 	}
+	broken = append(broken, collectBrokenSymlinkTree(filepath.Join(path, ".github", "plugin"), rel, "copilot")...)
+	if dest, err := os.Readlink(filepath.Join(path, "plugin.json")); err == nil {
+		if _, err := os.Stat(dest); err != nil {
+			broken = append(broken, brokenLink{
+				platformID: "copilot",
+				linkPath:   rel(filepath.Join(path, "plugin.json")),
+				dest:       config.DisplayPath(dest),
+			})
+		}
+	}
 
 	// OpenCode
 	opencodeJSON := filepath.Join(path, "opencode.json")
@@ -381,6 +395,7 @@ func collectBrokenLinks(name, path, agentsHome string) []brokenLink {
 			})
 		}
 	}
+	broken = append(broken, collectBrokenSymlinkTree(filepath.Join(path, ".opencode", "plugins"), rel, "opencode")...)
 
 	return broken
 }
@@ -502,6 +517,7 @@ func collectBrokenUserLinks(agentsHome string) []brokenLink {
 			}
 		}
 	}
+	broken = append(broken, collectBrokenSymlinkTree(filepath.Join(homeDir, ".config", "opencode", "plugins"), rel, "opencode")...)
 
 	return broken
 }
@@ -512,6 +528,7 @@ func countProjectLinks(name, path, agentsHome string) (int, int) {
 	brokenCount := len(brokenLinks)
 
 	ok := 0
+	pkgWarn := 0
 	// Cursor hard links
 	cursorRulesDir := filepath.Join(path, ".cursor", "rules")
 	if entries, err := os.ReadDir(cursorRulesDir); err == nil {
@@ -547,6 +564,7 @@ func countProjectLinks(name, path, agentsHome string) (int, int) {
 			}
 		}
 	}
+	ok += countManagedTreeEntries(filepath.Join(path, ".claude-plugin"), &pkgWarn)
 	// Single-file symlinks
 	for _, f := range []string{
 		filepath.Join(path, "AGENTS.md"),
@@ -561,7 +579,60 @@ func countProjectLinks(name, path, agentsHome string) (int, int) {
 			}
 		}
 	}
+	ok += countManagedTreeEntries(filepath.Join(path, ".cursor-plugin"), &pkgWarn)
+	ok += countManagedTreeEntries(filepath.Join(path, ".codex-plugin"), &pkgWarn)
+	ok += countManagedTreeEntries(filepath.Join(path, ".agents", "plugins"), &pkgWarn)
+	if countManagedFileOK(filepath.Join(path, "plugin.json"), &pkgWarn) > 0 {
+		ok++
+	}
+	ok += countManagedTreeEntries(filepath.Join(path, ".github", "plugin"), &pkgWarn)
+	ok += countHealthySymlinkTree(filepath.Join(path, ".opencode", "plugins"))
 	return ok, brokenCount
+}
+
+func collectBrokenSymlinkTree(root string, rel func(string) string, platformID string) []brokenLink {
+	broken := []brokenLink{}
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			return nil
+		}
+		dest, err := os.Readlink(path)
+		if err != nil {
+			return nil
+		}
+		if _, err := os.Stat(dest); err == nil {
+			return nil
+		}
+		broken = append(broken, brokenLink{
+			platformID: platformID,
+			linkPath:   rel(path),
+			dest:       config.DisplayPath(dest),
+		})
+		return nil
+	})
+	return broken
+}
+
+func countHealthySymlinkTree(root string) int {
+	count := 0
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		dest, err := os.Readlink(path)
+		if err != nil {
+			return nil
+		}
+		if _, err := os.Stat(dest); err == nil {
+			count++
+		}
+		return nil
+	})
+	return count
 }
 
 // printUserConfigStatus prints detailed user-level config status (healthy + broken).

@@ -304,3 +304,39 @@ func TestDoctorManifestLocalOnlyNoGitSources(t *testing.T) {
 		t.Errorf("local-only manifest should have no git sources; missing=%v present=%v", missing, present)
 	}
 }
+
+func TestLinkResourceFromSourcesSupportsPlugins(t *testing.T) {
+	tmp := t.TempDir()
+	agentsHome := filepath.Join(tmp, "agents")
+	sourceRoot := filepath.Join(tmp, "source")
+
+	t.Setenv("AGENTS_HOME", agentsHome)
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "plugins", "global", "review-toolkit"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(sourceRoot, "plugins", "global", "review-toolkit", "PLUGIN.yaml")
+	if err := os.WriteFile(manifest, []byte("kind: package\nname: review-toolkit\nplatforms:\n  - claude\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := linkResourceFromSources("plugins", "review-toolkit", testProjectName, []string{sourceRoot}); err != nil {
+		t.Fatalf("linkResourceFromSources: %v", err)
+	}
+
+	dest := filepath.Join(agentsHome, "plugins", testProjectName, "review-toolkit")
+	info, err := os.Lstat(dest)
+	if err != nil {
+		t.Fatalf("expected plugin bundle link at %s: %v", dest, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected %s to be a symlink", dest)
+	}
+	got, err := os.Readlink(dest)
+	if err != nil {
+		t.Fatalf("readlink %s: %v", dest, err)
+	}
+	want := filepath.Join(sourceRoot, "plugins", "global", "review-toolkit")
+	if got != want {
+		t.Fatalf("symlink target = %s, want %s", got, want)
+	}
+}

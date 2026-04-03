@@ -39,6 +39,7 @@ ${BOLD}DESCRIPTION${NC}
     - ~/.agents/mcp/<project>/
     - ~/.agents/skills/<project>/
     - ~/.agents/agents/<project>/
+    - ~/.agents/plugins/<project>/
 
     Note: Local .cursor/rules/ files not managed by dot-agents are preserved.
 
@@ -203,7 +204,8 @@ cmd_remove() {
       "  ~/.agents/settings/$project_name/" \
       "  ~/.agents/mcp/$project_name/" \
       "  ~/.agents/skills/$project_name/" \
-      "  ~/.agents/agents/$project_name/"
+      "  ~/.agents/agents/$project_name/" \
+      "  ~/.agents/plugins/$project_name/"
   else
     info_box "Tip" \
       "Project directories in ~/.agents/ will be preserved." \
@@ -676,6 +678,7 @@ remove_project_dirs() {
     "$agents_home/mcp/$project"
     "$agents_home/skills/$project"
     "$agents_home/agents/$project"
+    "$agents_home/plugins/$project"
   )
 
   for dir in "${dirs[@]}"; do

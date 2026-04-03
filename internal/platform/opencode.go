@@ -13,6 +13,10 @@ import (
 type opencode struct{}
 
 const opencodeJSON = "opencode.json"
+const (
+	opencodeProjectPluginsDir = ".opencode/plugins"
+	opencodeGlobalPluginsDir  = ".config/opencode/plugins"
+)
 
 func NewOpenCode() Platform { return &opencode{} }
 
@@ -61,6 +65,9 @@ func (o *opencode) CreateLinks(project, repoPath string) error {
 	if err := o.createSkillsLinks(project, repoPath, agentsHome); err != nil {
 		return err
 	}
+	if err := o.createPluginLinks(project, repoPath, agentsHome); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -79,6 +86,104 @@ func (o *opencode) createSkillsLinks(project, repoPath, agentsHome string) error
 	return syncScopedDirSymlinksTargets(agentsHome, "skills", project, "SKILL.md", filepath.Join(repoPath, ".agents", "skills"))
 }
 
+func (o *opencode) createPluginLinks(project, repoPath, agentsHome string) error {
+	projectPlugins, err := o.loadNativePlugins(agentsHome, project)
+	if err != nil {
+		return err
+	}
+	if err := o.emitPlugins(projectPlugins, filepath.Join(repoPath, opencodeProjectPluginsDir)); err != nil {
+		return err
+	}
+
+	globalPlugins, err := o.loadNativePlugins(agentsHome, "global")
+	if err != nil {
+		return err
+	}
+	for _, homeRoot := range config.UserHomeRoots() {
+		dstRoot := filepath.Join(homeRoot, opencodeGlobalPluginsDir)
+		if err := o.emitPlugins(globalPlugins, dstRoot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *opencode) loadNativePlugins(agentsHome, scope string) ([]PluginSpec, error) {
+	if _, err := os.Stat(filepath.Join(agentsHome, "plugins", scope)); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	specs, err := ListPluginSpecs(agentsHome, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	filtered := make([]PluginSpec, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Kind != PluginKindNative {
+			continue
+		}
+		if !pluginSpecHasPlatform(spec, o.ID()) {
+			continue
+		}
+		filtered = append(filtered, spec)
+	}
+	return filtered, nil
+}
+
+func (o *opencode) emitPlugins(specs []PluginSpec, dstRoot string) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(dstRoot, 0755); err != nil {
+		return err
+	}
+	for _, spec := range specs {
+		if err := o.emitPlugin(spec, dstRoot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *opencode) emitPlugin(spec PluginSpec, dstRoot string) error {
+	pluginRoot := filepath.Join(dstRoot, spec.Name)
+	if err := os.MkdirAll(pluginRoot, 0755); err != nil {
+		return err
+	}
+	if err := syncPluginTree(filepath.Join(spec.Dir, "files"), pluginRoot); err != nil {
+		return err
+	}
+	if err := syncPluginTree(filepath.Join(spec.Dir, "platforms", o.ID()), pluginRoot); err != nil {
+		return err
+	}
+	return nil
+}
+
+func syncPluginTree(srcRoot, dstRoot string) error {
+	entries, err := os.ReadDir(srcRoot)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(srcRoot, entry.Name())
+		dstPath := filepath.Join(dstRoot, entry.Name())
+		if entry.IsDir() {
+			if err := syncPluginTree(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := links.Symlink(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (o *opencode) RemoveLinks(project, repoPath string) error {
 	agentsHome := config.AgentsHome()
 
@@ -91,6 +196,11 @@ func (o *opencode) RemoveLinks(project, repoPath string) error {
 		}
 	}
 
+	_ = removePluginLinks(filepath.Join(repoPath, opencodeProjectPluginsDir), agentsHome)
+	for _, homeRoot := range config.UserHomeRoots() {
+		_ = removePluginLinks(filepath.Join(homeRoot, opencodeGlobalPluginsDir), agentsHome)
+	}
+
 	skillsDir := filepath.Join(repoPath, ".agents", "skills")
 	if entries, err := os.ReadDir(skillsDir); err == nil {
 		for _, e := range entries {
@@ -98,5 +208,23 @@ func (o *opencode) RemoveLinks(project, repoPath string) error {
 		}
 	}
 
+	return nil
+}
+
+func removePluginLinks(root, agentsHome string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if entry.IsDir() {
+			if err := removePluginLinks(path, agentsHome); err != nil {
+				return err
+			}
+			continue
+		}
+		_ = links.RemoveIfSymlinkUnder(path, agentsHome)
+	}
 	return nil
 }
