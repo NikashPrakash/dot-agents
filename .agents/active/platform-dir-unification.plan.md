@@ -1,5 +1,10 @@
 # Canonical `~/.agents` Rollout Plan
 
+Status: Blocked — Phases 1+2+3 complete (Go layer). Phases 4+5 (bash parity, new bucket expansion) are blocked on resource-intent-centralization implementation rollout.
+Depends on: `docs/rfcs/resource-intent-centralization-rfc.md` plus the resulting resource-intent-centralization implementation
+
+
+
 ## Summary
 
 Implement this in two stages with `Go-first, bash-later` scope.
