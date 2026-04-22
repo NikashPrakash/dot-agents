@@ -1,0 +1,59 @@
+schema_version: 1
+plan_id: error-message-compliance
+tasks:
+    - id: inventory-error-message-behavior
+      title: Inventory current CLI error rendering and command-specific failure patterns
+      status: completed
+      depends_on: []
+      blocks:
+        - define-error-message-contract
+        - implement-error-message-fixes
+      owner: dot-agents
+      write_scope:
+        - cmd/dot-agents/
+        - commands/
+        - docs/
+      verification_required: false
+      notes: Inventory recorded in docs/research/error-message-inventory.md (2026-04-19). Strong compliance exists in commands/ux.go, workflow arg helpers, and the mcp/settings families; highest drift remains in commands/kg/* and commands/agents/* where many user-correctable failures still return raw fmt.Errorf or hand-authored usage strings.
+    - id: define-error-message-contract
+      title: Define the supported contract for actionable CLI error messages
+      status: completed
+      depends_on:
+        - inventory-error-message-behavior
+      blocks:
+        - implement-error-message-fixes
+        - add-error-message-regression-coverage
+      owner: dot-agents
+      write_scope:
+        - commands/
+        - docs/
+      verification_required: false
+      notes: 'Contract updated in docs/ERROR_MESSAGE_CONTRACT.md from the 2026-04-19 inventory. The supported decision order is now explicit: UsageError for invocation shape, ErrorWithHints for recoverable runtime/setup, raw wrapped errors only for non-actionable execution failures. The contract now also requires valid-value enumeration for finite domains, forbids hand-authored usage strings, and treats substring-only enrichCLIError matching as transitional rather than preferred.'
+    - id: implement-error-message-fixes
+      title: Normalize mismatched command errors onto the shared CLIError contract
+      status: completed
+      depends_on:
+        - inventory-error-message-behavior
+        - define-error-message-contract
+      blocks:
+        - add-error-message-regression-coverage
+      owner: dot-agents
+      write_scope:
+        - cmd/dot-agents/
+        - commands/
+        - internal/ui/
+      verification_required: true
+      notes: Implement the 2026-04-19 contract fixes from docs/ERROR_MESSAGE_CONTRACT.md and docs/research/error-message-inventory.md. Prioritize commands/kg/bridge.go, commands/kg/query_lint_maintain.go, commands/kg/sync_code_warm_link.go, and commands/agents/{remove,import,promote}.go; touch commands/add.go or commands/install.go only if needed for consistency. Convert user-correctable finite-domain and recovery-heavy failures to UsageError/ErrorWithHints, enumerate valid values, and replace hand-authored usage strings with shared arg helpers. Do not introduce a machine-readable JSON error envelope in this task.
+    - id: add-error-message-regression-coverage
+      title: Add regression coverage for error message rendering and recovery hints
+      status: completed
+      depends_on:
+        - define-error-message-contract
+        - implement-error-message-fixes
+      blocks: []
+      owner: dot-agents
+      write_scope:
+        - commands/*_test.go
+        - cmd/dot-agents/
+      verification_required: true
+      notes: Add regression coverage in commands/kg/kg_test.go, commands/agents/agents_test.go, and commands/ux_test.go for the 2026-04-19 error-message contract updates. Cover representative finite-domain validation messages (valid values are ...), KG link/bridge usage-shape errors, agent lifecycle recovery guidance, and root parse / render paths so the new wording and hints stay stable.

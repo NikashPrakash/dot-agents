@@ -9,6 +9,7 @@ import (
 
 	"github.com/NikashPrakash/dot-agents/internal/config"
 	"github.com/NikashPrakash/dot-agents/internal/platform"
+	"github.com/NikashPrakash/dot-agents/internal/projectsync"
 	"github.com/NikashPrakash/dot-agents/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -20,14 +21,25 @@ func NewInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Set up project from .agentsrc.json manifest",
-		Long: `Reads .agentsrc.json in the current directory and wires up all declared
-resources (skills, rules, agents, hooks, MCP configs, settings) by creating
-the appropriate platform-specific symlinks and hard links.
+		Long: `Reads .agentsrc.json in the current directory, materializes declared skills and
+agents into ~/.agents/ from configured sources, then applies the manifest to each
+installed platform (rules, hooks, MCP configs, settings) with the same link pass
+as dot-agents refresh.
 
 Commit .agentsrc.json to git so any contributor can run 'dot-agents install'
 after cloning — no manual init or sync required.
 
-Use --generate to create .agentsrc.json from the current ~/.agents/ state.`,
+Use --generate to create or refresh .agentsrc.json from the current ~/.agents/ state.
+If a manifest already exists, generated skill and platform lists replace stale values,
+but existing source entries (for example git remotes), a non-empty project name, and
+unknown JSON keys are preserved.`,
+		Example: ExampleBlock(
+			"  dot-agents install",
+			"  dot-agents install --strict",
+			"  dot-agents install --generate",
+			"  dot-agents install --generate --force",
+		),
+		Args: NoArgsWithHints("Run install from the target repository directory instead of passing a path."),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if generate {
 				return runInstallGenerate()
@@ -77,7 +89,7 @@ func runInstall(strict bool) error {
 	}
 
 	createInstallPlatformLinks(projectName, projectPath)
-	finalizeInstall(projectPath)
+	finalizeInstall(projectName, projectPath)
 
 	ui.SuccessBox(
 		fmt.Sprintf("Project '%s' installed successfully!", projectName),
@@ -93,17 +105,21 @@ func loadInstallManifest(projectPath string) (*config.AgentsRC, error) {
 		return rc, nil
 	}
 	if os.IsNotExist(err) {
-		ui.Error(config.AgentsRCFile + " not found in current directory")
-		fmt.Fprintln(os.Stdout, "  Run 'dot-agents install --generate' to create one, or")
-		fmt.Fprintln(os.Stdout, "  run 'dot-agents add .' to register this project first.")
-		return nil, fmt.Errorf("manifest not found")
+		return nil, ErrorWithHints(
+			config.AgentsRCFile+" not found in current directory",
+			"Run `dot-agents install --generate` to create one from the current shared state.",
+			"If this project is not managed yet, run `dot-agents add .` first.",
+		)
 	}
 	return nil, fmt.Errorf("reading %s: %w", config.AgentsRCFile, err)
 }
 
 func ensureAgentsHomeInitialized() error {
 	if _, err := os.Stat(filepath.Join(config.AgentsHome(), "config.json")); err != nil {
-		return fmt.Errorf("~/.agents/ not initialized — run 'dot-agents init' first")
+		return ErrorWithHints(
+			"~/.agents/ not initialized",
+			"Run `dot-agents init` once on this machine before using install.",
+		)
 	}
 	return nil
 }
@@ -125,13 +141,16 @@ func resolveInstallSources(sources []config.Source, strict bool) ([]string, erro
 }
 
 func linkInstallResources(projectName string, rc *config.AgentsRC, resolvedSources []string, strict bool) error {
-	if len(resolvedSources) == 0 {
-		return nil
+	sources := resolvedSources
+	if len(sources) == 0 {
+		// Manifest may omit explicit sources while listing skills/agents that already exist
+		// under ~/.agents/<bucket>/<project>/ (e.g. after promote). Resolve from canonical home.
+		sources = []string{config.AgentsHome()}
 	}
-	if err := linkInstallResourceList("skills", "skill", rc.Skills, projectName, resolvedSources, strict); err != nil {
+	if err := linkInstallResourceList("skills", "skill", rc.Skills, projectName, sources, strict); err != nil {
 		return err
 	}
-	return linkInstallResourceList("agents", "agent", rc.Agents, projectName, resolvedSources, strict)
+	return linkInstallResourceList("agents", "agent", rc.Agents, projectName, sources, strict)
 }
 
 func linkInstallResourceList(resourceType, label string, names []string, projectName string, sources []string, strict bool) error {
@@ -152,7 +171,7 @@ func ensureInstallProjectDirs(projectName string) error {
 		ui.DryRun("create ~/.agents/ directories for '" + projectName + "'")
 		return nil
 	}
-	if err := createProjectDirs(projectName); err != nil {
+	if err := projectsync.CreateProjectDirs(projectName); err != nil {
 		return err
 	}
 	ui.Bullet("ok", "Ensured ~/.agents/ project directories")
@@ -184,6 +203,25 @@ func createInstallPlatformLinks(projectName, projectPath string) {
 	ui.Section("Creating platform links")
 	config.SetWindowsMirrorContext(projectPath)
 
+	var installed []platform.Platform
+	for _, p := range platform.All() {
+		if p.IsInstalled() {
+			installed = append(installed, p)
+		}
+	}
+	lines, err := platform.RunSharedTargetProjection(projectName, projectPath, installed, Flags.DryRun)
+	if err != nil {
+		if Flags.DryRun {
+			ui.Bullet("warn", fmt.Sprintf("shared targets plan: %v", err))
+		} else {
+			ui.Bullet("warn", fmt.Sprintf("shared targets: %v", err))
+		}
+	} else if lines != nil {
+		for _, line := range lines {
+			ui.DryRun(line)
+		}
+	}
+
 	for _, p := range platform.All() {
 		if !p.IsInstalled() {
 			if Flags.Verbose {
@@ -203,13 +241,15 @@ func createInstallPlatformLinks(projectName, projectPath string) {
 	}
 }
 
-func finalizeInstall(projectPath string) {
+func finalizeInstall(projectName, projectPath string) {
 	if Flags.DryRun {
 		return
 	}
-	writeRefreshMarker(projectPath, Commit, Describe)
-	ensureGitignoreEntry(projectPath, ".agents-refresh")
-	ui.Bullet("ok", "Wrote .agents-refresh marker")
+	if err := projectsync.WriteRefreshToAgentsRC(projectName, projectPath, Version, Commit, Describe); err != nil {
+		ui.Bullet("warn", fmt.Sprintf("manifest refresh metadata: %v", err))
+		return
+	}
+	ui.Bullet("ok", "Updated .agentsrc.json refresh details")
 }
 
 // ─── runInstallGenerate ──────────────────────────────────────────────────────
@@ -234,9 +274,21 @@ func runInstallGenerate() error {
 		return fmt.Errorf("generating manifest: %w", err)
 	}
 
+	manifestPath := filepath.Join(projectPath, config.AgentsRCFile)
+	if _, statErr := os.Stat(manifestPath); statErr == nil {
+		existing, loadErr := config.LoadAgentsRC(projectPath)
+		if loadErr != nil {
+			return fmt.Errorf("loading existing %s: %w", config.AgentsRCFile, loadErr)
+		}
+		rc = config.MergeGenerateAgentsRC(existing, rc)
+	} else if !os.IsNotExist(statErr) {
+		return fmt.Errorf("accessing %s: %w", config.AgentsRCFile, statErr)
+	}
+
 	if Flags.DryRun {
 		ui.DryRun(fmt.Sprintf("Would write %s with:", config.AgentsRCFile))
-		ui.DryRun(fmt.Sprintf("  project:  %s", projectName))
+		ui.DryRun(fmt.Sprintf("  project:  %s", rc.Project))
+		ui.DryRun(fmt.Sprintf("  sources:  %d entries", len(rc.Sources)))
 		ui.DryRun(fmt.Sprintf("  skills:   %v", rc.Skills))
 		ui.DryRun(fmt.Sprintf("  rules:    %v", rc.Rules))
 		ui.DryRun(fmt.Sprintf("  agents:   %v", rc.Agents))
@@ -409,7 +461,7 @@ func touchLastFetch(cacheDir string) {
 func linkResourceFromSources(resourceType, name, project string, sources []string) error {
 	destDir := filepath.Join(config.AgentsHome(), resourceType, project, name)
 	markerFile := resourceMarkerFile(resourceType)
-	candidate, srcRoot, found := firstResourceCandidate(resourceType, name, markerFile, sources)
+	candidate, srcRoot, found := firstResourceCandidate(resourceType, name, markerFile, project, sources)
 	if !found {
 		return fmt.Errorf("not found in any source")
 	}
@@ -444,13 +496,18 @@ func resourceMarkerFile(resourceType string) string {
 	}
 }
 
-func firstResourceCandidate(resourceType, name, markerFile string, sources []string) (string, string, bool) {
+func firstResourceCandidate(resourceType, name, markerFile, project string, sources []string) (string, string, bool) {
 	for _, srcRoot := range sources {
-		candidate := filepath.Join(srcRoot, resourceType, "global", name)
-		if !resourceCandidateIsValid(candidate, markerFile) {
-			continue
+		// Prefer project-scoped canonical dirs (~/.agents/skills/<project>/…), then global/.
+		candidates := []string{
+			filepath.Join(srcRoot, resourceType, project, name),
+			filepath.Join(srcRoot, resourceType, "global", name),
 		}
-		return candidate, srcRoot, true
+		for _, candidate := range candidates {
+			if resourceCandidateIsValid(candidate, markerFile) {
+				return candidate, srcRoot, true
+			}
+		}
 	}
 	return "", "", false
 }

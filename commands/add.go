@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NikashPrakash/dot-agents/commands/kg"
 	"github.com/NikashPrakash/dot-agents/internal/config"
 	"github.com/NikashPrakash/dot-agents/internal/links"
 	"github.com/NikashPrakash/dot-agents/internal/platform"
+	"github.com/NikashPrakash/dot-agents/internal/projectsync"
 	"github.com/NikashPrakash/dot-agents/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -199,8 +202,16 @@ func NewAddCmd() *cobra.Command {
 		Use:   "add <path>",
 		Short: "Add a project to dot-agents management",
 		Long: `Registers a project with dot-agents and sets up configuration links.
-Existing config files are backed up before being replaced.`,
-		Args: cobra.ExactArgs(1),
+Existing config files are backed up before being replaced.
+
+Use this when a project should consume shared configuration from ~/.agents/
+and stay refreshable by both human operators and AI agents.`,
+		Example: ExampleBlock(
+			"  dot-agents add .",
+			"  dot-agents add ~/src/my-repo --name billing-api",
+			"  dot-agents add . --dry-run",
+		),
+		Args: ExactArgsWithHints(1, "Pass a project directory such as `.` or `~/src/my-repo`."),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAdd(args[0], name)
 		},
@@ -452,7 +463,7 @@ func runAdd(pathArg, nameArg string) error {
 
 	// Step 4: Create project dirs
 	ui.Step("Creating project structure...")
-	if err := createProjectDirs(projectName); err != nil {
+	if err := projectsync.CreateProjectDirs(projectName); err != nil {
 		return err
 	}
 	ui.Bullet("ok", "Created ~/.agents/ directories")
@@ -463,23 +474,30 @@ func runAdd(pathArg, nameArg string) error {
 		ui.Bullet("ok", fmt.Sprintf("Restored %d item(s) from ~/.agents/resources/%s/", restored, projectName))
 	}
 
+	if err := ensureProjectKGMCPConfigs(projectName, projectPath, agentsHome); err != nil {
+		return fmt.Errorf("writing KG MCP configs: %w", err)
+	}
+
 	// Step 5: Create links
 	ui.Step("Creating links...")
 	config.SetWindowsMirrorContext(projectPath)
 
+	var addInstalled []platform.Platform
 	for _, p := range platform.All() {
-		if !p.IsInstalled() {
-			continue
+		if p.IsInstalled() {
+			addInstalled = append(addInstalled, p)
 		}
+	}
+	if _, err := platform.RunSharedTargetProjection(projectName, projectPath, addInstalled, false); err != nil {
+		ui.Bullet("warn", fmt.Sprintf("shared targets: %v", err))
+	}
+	for _, p := range addInstalled {
 		if err := p.CreateLinks(projectName, projectPath); err != nil {
 			ui.Bullet("warn", fmt.Sprintf("%s: %v", p.DisplayName(), err))
 		} else {
 			ui.Bullet("ok", p.DisplayName()+" links created")
 		}
 	}
-
-	// Add .agents-refresh to .gitignore
-	ensureGitignoreEntry(projectPath, ".agents-refresh")
 
 	// Step 6: Register
 	cfg.AddProject(projectName, projectPath)
@@ -501,24 +519,6 @@ func runAdd(pathArg, nameArg string) error {
 		nextSteps = append(nextSteps, "Migrate deprecated formats: dot-agents migrate detect")
 	}
 	ui.SuccessBox(fmt.Sprintf("Project '%s' added successfully!", projectName), nextSteps...)
-	return nil
-}
-
-func createProjectDirs(project string) error {
-	agentsHome := config.AgentsHome()
-	dirs := []string{
-		filepath.Join(agentsHome, "rules", project),
-		filepath.Join(agentsHome, "settings", project),
-		filepath.Join(agentsHome, "mcp", project),
-		filepath.Join(agentsHome, "skills", project),
-		filepath.Join(agentsHome, "agents", project),
-		filepath.Join(agentsHome, "hooks", project),
-	}
-	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			return fmt.Errorf("creating %s: %w", d, err)
-		}
-	}
 	return nil
 }
 
@@ -618,8 +618,7 @@ func restoreLegacyResourceFile(project, relPath, agentsHome, path string) int {
 		return 0
 	}
 	destPath := filepath.Join(agentsHome, destRel)
-	_ = os.MkdirAll(filepath.Dir(destPath), 0755)
-	if err := copyFile(path, destPath); err == nil {
+	if err := projectsync.CopyFile(path, destPath); err == nil {
 		return 1
 	}
 	return 0
@@ -637,39 +636,73 @@ func mirrorBackup(project, projectPath, srcFile, timestamp string) {
 
 	// Active (latest) copy — overwritten on each backup run
 	activeTarget := filepath.Join(agentsHome, "resources", project, relPath)
-	os.MkdirAll(filepath.Dir(activeTarget), 0755)
-	copyFile(srcFile, activeTarget)
+	projectsync.CopyFile(srcFile, activeTarget) //nolint:errcheck
 
 	// Timestamped immutable copy
 	if timestamp != "" {
 		tsTarget := filepath.Join(agentsHome, "resources", project, "backups", timestamp, relPath)
-		os.MkdirAll(filepath.Dir(tsTarget), 0755)
-		copyFile(srcFile, tsTarget)
+		projectsync.CopyFile(srcFile, tsTarget) //nolint:errcheck
 	}
 }
 
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
+func ensureProjectKGMCPConfigs(projectName, projectPath, agentsHome string) error {
+	rc, err := config.LoadAgentsRC(projectPath)
+	if err != nil {
+		return nil
+	}
+	if rc.KG == nil {
+		return nil
+	}
+	return writeKGMCPConfigs(filepath.Join(agentsHome, "mcp", projectName))
+}
+
+func ensureGlobalKGMCPConfigs(agentsHome string) error {
+	if _, err := os.Stat(kg.ConfigPath()); err != nil {
+		return nil
+	}
+	return writeKGMCPConfigs(filepath.Join(agentsHome, "mcp", "global"))
+}
+
+func writeKGMCPConfigs(scopeDir string) error {
+	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0644)
-}
-
-func ensureGitignoreEntry(repoPath, entry string) {
-	gitignorePath := filepath.Join(repoPath, ".gitignore")
-	data, err := os.ReadFile(gitignorePath)
-	if err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(line) == entry {
-				return
-			}
+	if resolved, resolveErr := filepath.EvalSymlinks(exe); resolveErr == nil {
+		exe = resolved
+	}
+	server := map[string]any{
+		"command": exe,
+		"args":    []string{"kg", "serve"},
+		"type":    "stdio",
+	}
+	for _, name := range []string{"claude.json", "cursor.json", "mcp.json"} {
+		if err := writeKGMCPConfigFile(filepath.Join(scopeDir, name), server); err != nil {
+			return err
 		}
 	}
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
+	return nil
+}
+
+func writeKGMCPConfigFile(path string, server map[string]any) error {
+	configMap := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &configMap)
 	}
-	defer f.Close()
-	fmt.Fprintln(f, entry)
+	servers, _ := configMap["servers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	servers["dot-agents-kg"] = server
+	configMap["servers"] = servers
+
+	data, err := json.MarshalIndent(configMap, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }

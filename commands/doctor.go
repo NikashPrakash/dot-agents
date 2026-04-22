@@ -17,7 +17,17 @@ func NewDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check installations, validate links, detect issues",
-		RunE:  runDoctor,
+		Long: `Audits the local dot-agents installation, installed platforms, manifest health,
+and managed project links using the same managed paths as dot-agents install and
+refresh. Doctor is the fastest way to detect drift after manual edits, moved
+repositories, or partial setup on a new machine.`,
+		Example: ExampleBlock(
+			"  dot-agents doctor",
+			"  dot-agents doctor --verbose",
+			"  dot-agents doctor --dry-run",
+		),
+		Args: NoArgsWithHints("`dot-agents doctor` audits the current installation and does not take a project argument."),
+		RunE: runDoctor,
 	}
 }
 
@@ -115,14 +125,14 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		if total == 0 {
 			ui.Bullet("none", fmt.Sprintf("%s — no managed links detected", name))
 			if Flags.Verbose {
-				printAudit(name, path, agentsHome, "")
+				printAudit(name, path, agentsHome, "", cfg)
 			}
 			continue
 		}
 		if len(brokenLinks) == 0 {
 			ui.Bullet("ok", fmt.Sprintf("%s — %d links healthy", name, ok))
 			if Flags.Verbose {
-				printAudit(name, path, agentsHome, "")
+				printAudit(name, path, agentsHome, "", cfg)
 			}
 			continue
 		}
@@ -132,7 +142,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 		if Flags.Verbose {
 			// Show full audit detail (healthy + broken) in verbose mode
-			printAudit(name, path, agentsHome, "")
+			printAudit(name, path, agentsHome, "", cfg)
 		} else {
 			// Default: show only broken links
 			for _, bl := range brokenLinks {
@@ -222,6 +232,47 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stdout, "  %sTip: run with -v to see per-project manifest details%s\n", ui.Dim, ui.Reset)
 	}
 
+	ui.Section("Plugins")
+	pluginSpecs, pluginErr := platform.ListPluginSpecs(agentsHome, "")
+	if pluginErr != nil {
+		ui.Bullet("error", fmt.Sprintf("plugin bundles unavailable: %v", pluginErr))
+	} else if len(pluginSpecs) == 0 {
+		ui.Info("No canonical plugin bundles")
+	} else {
+		for _, spec := range pluginSpecs {
+			bundleLabel := filepath.Join(spec.Scope, spec.Name)
+			for _, platformID := range spec.Platforms {
+				if platformID != "opencode" {
+					ui.Bullet("warn", fmt.Sprintf("%s: platforms includes %s but no emitter is implemented yet", bundleLabel, platformID))
+				}
+			}
+			if hasPluginPlatform(spec.Platforms, "opencode") {
+				for _, name := range names {
+					projectPath := cfg.GetProjectPath(name)
+					if projectPath == "" {
+						continue
+					}
+					linkPath := filepath.Join(projectPath, ".opencode", "plugins", spec.Name)
+					info, err := os.Lstat(linkPath)
+					if err != nil || info.Mode()&os.ModeSymlink == 0 {
+						continue
+					}
+					dest, err := os.Readlink(linkPath)
+					if err != nil {
+						ui.Bullet("error", fmt.Sprintf("%s: broken symlink at %s", bundleLabel, linkPath))
+						continue
+					}
+					if !filepath.IsAbs(dest) {
+						dest = filepath.Clean(filepath.Join(filepath.Dir(linkPath), dest))
+					}
+					if _, err := os.Stat(dest); err != nil {
+						ui.Bullet("error", fmt.Sprintf("%s: broken symlink at %s", bundleLabel, linkPath))
+					}
+				}
+			}
+		}
+	}
+
 	fmt.Fprintln(os.Stdout)
 	if !anyBroken {
 		if !Flags.Verbose {
@@ -237,6 +288,15 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stdout)
 	}
 	return nil
+}
+
+func hasPluginPlatform(platforms []string, want string) bool {
+	for _, platformID := range platforms {
+		if platformID == want {
+			return true
+		}
+	}
+	return false
 }
 
 // brokenLink holds info about a single broken managed link.

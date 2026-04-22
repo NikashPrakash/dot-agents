@@ -16,9 +16,9 @@ const (
 	copilotMCPJSON           = "mcp.json"
 	copilotClaudeDir         = ".claude"
 	copilotSettingsLocalJSON = "settings.local.json"
-	copilotInstructionsMD = "copilot-instructions.md"
-	copilotGitHubDir = ".github"
-	copilotVSCodeDir = ".vscode"
+	copilotInstructionsMD    = "copilot-instructions.md"
+	copilotGitHubDir         = ".github"
+	copilotVSCodeDir         = ".vscode"
 )
 
 func NewCopilot() Platform { return &copilot{} }
@@ -147,35 +147,12 @@ func (c *copilot) createInstructionsLink(project, repoPath, agentsHome string) e
 	return nil
 }
 
-func (c *copilot) createSkillsLinks(project, repoPath, agentsHome string) error {
-	return syncScopedDirSymlinksTargets(agentsHome, "skills", project, "SKILL.md", filepath.Join(repoPath, ".agents", "skills"))
+func (c *copilot) createSkillsLinks(project, repoPath, _ string) error {
+	return nil
 }
 
 func (c *copilot) createAgentsLinks(project, repoPath, agentsHome string) error {
-	agentsTarget := filepath.Join(repoPath, copilotGitHubDir, "agents")
-	if err := os.MkdirAll(agentsTarget, 0755); err != nil {
-		return err
-	}
-	projectAgents := filepath.Join(agentsHome, "agents", project)
-	entries, err := os.ReadDir(projectAgents)
-	if err != nil {
-		return nil
-	}
-	for _, e := range entries {
-		agentDir := filepath.Join(projectAgents, e.Name())
-		if !links.IsDirEntry(agentDir) {
-			continue
-		}
-		agentMD := filepath.Join(agentDir, "AGENT.md")
-		if _, err := os.Stat(agentMD); err != nil {
-			continue
-		}
-		target := filepath.Join(agentsTarget, e.Name()+".agent.md")
-		if _, err := os.Lstat(target); err == nil {
-			continue
-		}
-		links.Symlink(agentMD, target)
-	}
+	// `.github/agents/*.agent.md` — symlinked from canonical AGENT.md by CollectAndExecuteSharedTargetPlan
 	return nil
 }
 
@@ -238,7 +215,7 @@ func (c *copilot) emitCanonicalProjectHookFiles(specs []HookSpec, hooksDir strin
 }
 
 func (c *copilot) emitLegacyProjectHookFiles(agentsHome, project, hooksDir string) error {
-	specs, err := listHookSpecs(agentsHome, project)
+	specs, err := ListHookSpecs(agentsHome, project)
 	if err != nil {
 		return pruneManagedRenderedFanoutExtras(hooksDir, map[string]bool{}, isLikelyRenderedCopilotHookFile)
 	}
@@ -344,4 +321,16 @@ func (c *copilot) removeHookLinks(project, repoPath, agentsHome string) {
 			}
 		}
 	}
+}
+
+func (c *copilot) SharedTargetIntents(project string) ([]ResourceIntent, error) {
+	skills, err := BuildSharedSkillMirrorIntents(project, filepath.Join(".agents", "skills"))
+	if err != nil {
+		return nil, err
+	}
+	agents, err := BuildSharedAgentFileSymlinkIntents(project, filepath.Join(copilotGitHubDir, "agents"), ".agent.md")
+	if err != nil {
+		return nil, err
+	}
+	return append(skills, agents...), nil
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/NikashPrakash/dot-agents/internal/platform"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -54,6 +55,46 @@ func TestMapResourceRelToDestHooks(t *testing.T) {
 		if got != c.want {
 			t.Fatalf("mapResourceRelToDest(%q, %q)=%q, want %q", project, c.rel, got, c.want)
 		}
+	}
+}
+
+func TestFoldImportCandidates_EmptyIsNoOp(t *testing.T) {
+	r := foldImportCandidates(nil, filepath.Join(t.TempDir(), ".agents"), "20260101-000000")
+	if r.imported != 0 || r.skipped != 0 {
+		t.Fatalf("expected zero aggregate, got %#v", r)
+	}
+}
+
+func TestSupportsCanonicalImportPathNonPlugin_Table(t *testing.T) {
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{relCursorHooksJSON, true},
+		{".github/hooks/x.json", true},
+		{".opencode/plugins/foo", true},
+		{"misc/unknown.txt", false},
+	}
+	for _, c := range cases {
+		if got := supportsCanonicalImportPathNonPlugin(c.rel); got != c.want {
+			t.Fatalf("supportsCanonicalImportPathNonPlugin(%q)=%v want %v", c.rel, got, c.want)
+		}
+	}
+}
+
+func TestCanonicalImportOutputsNonPlugin_UnknownRel(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "notes.txt")
+	if err := os.WriteFile(src, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c := importCandidate{project: canonicalImportProject, sourceRoot: tmp, sourcePath: src}
+	outputs, ok, err := canonicalImportOutputsNonPlugin(c, "notes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || len(outputs) != 0 {
+		t.Fatalf("expected no outputs, ok=%v len=%d", ok, len(outputs))
 	}
 }
 
@@ -598,4 +639,318 @@ func mustUnmarshalYAMLMap(t *testing.T, content []byte) map[string]any {
 		t.Fatalf(yamlUnmarshalFailedFmt, err, string(content))
 	}
 	return manifest
+}
+
+func TestImportConflictStableBundleName(t *testing.T) {
+	cases := []struct {
+		logical, origin string
+		occupied        []string
+		want            string
+	}{
+		{"foo", "cursor", nil, "cursor-foo"},
+		{"foo", "cursor", []string{"cursor-foo"}, "cursor-foo-2"},
+		{"foo", "cursor", []string{"cursor-foo", "cursor-foo-2"}, "cursor-foo-3"},
+		{"", "cursor", nil, "cursor-hook"},
+	}
+	for _, tc := range cases {
+		occ := map[string]bool{}
+		for _, o := range tc.occupied {
+			occ[o] = true
+		}
+		got := importConflictStableBundleName(tc.logical, tc.origin, func(n string) bool { return occ[n] })
+		if got != tc.want {
+			t.Fatalf("importConflictStableBundleName(%q, %q, occupied=%v)=%q, want %q", tc.logical, tc.origin, tc.occupied, got, tc.want)
+		}
+	}
+}
+
+func TestLogicalNameFromHooksDest(t *testing.T) {
+	cases := []struct {
+		rel  string
+		want string
+	}{
+		{"hooks/proj/foo/HOOK.yaml", "foo"},
+		{"hooks/proj/bar.json", "bar"},
+		{"settings/x", ""},
+	}
+	for _, tc := range cases {
+		if got := logicalNameFromHooksDest(tc.rel); got != tc.want {
+			t.Fatalf("logicalNameFromHooksDest(%q)=%q, want %q", tc.rel, got, tc.want)
+		}
+	}
+}
+
+func TestImportConflictFirstFreeAlternateDestRel(t *testing.T) {
+	agentsHome := t.TempDir()
+	primary := filepath.Join(agentsHome, "hooks", "proj", "foo", "HOOK.yaml")
+	if err := os.MkdirAll(filepath.Dir(primary), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(primary, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := importConflictFirstFreeAlternateDestRel(agentsHome, "hooks/proj/foo/HOOK.yaml", "cursor")
+	if !ok || got != "hooks/proj/cursor-foo/HOOK.yaml" {
+		t.Fatalf("got ok=%v rel=%q", ok, got)
+	}
+
+	// Second file occupies cursor-foo; expect -2 suffix.
+	alt1 := filepath.Join(agentsHome, "hooks", "proj", "cursor-foo", "HOOK.yaml")
+	if err := os.MkdirAll(filepath.Dir(alt1), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(alt1, []byte("y"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got2, ok2 := importConflictFirstFreeAlternateDestRel(agentsHome, "hooks/proj/foo/HOOK.yaml", "cursor")
+	if !ok2 || got2 != "hooks/proj/cursor-foo-2/HOOK.yaml" {
+		t.Fatalf("got2 ok=%v rel=%q", ok2, got2)
+	}
+
+	d := t.TempDir()
+	if _, ok := importConflictFirstFreeAlternateDestRel(d, "settings/foo.json", "cursor"); ok {
+		t.Fatal("expected unsupported path")
+	}
+}
+
+func TestImportConflictFirstFreeAlternateDestRel_flatJSON(t *testing.T) {
+	agentsHome := t.TempDir()
+	p := filepath.Join(agentsHome, "hooks", "proj", "bar.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := importConflictFirstFreeAlternateDestRel(agentsHome, "hooks/proj/bar.json", "github")
+	if !ok || got != "hooks/proj/github-bar.json" {
+		t.Fatalf("got ok=%v rel=%q", ok, got)
+	}
+}
+
+func TestBuildCanonicalHookOutputs_setsOrigin(t *testing.T) {
+	specs := []importedHookSpec{{
+		when:      "pre_tool_use",
+		command:   "echo",
+		timeoutMS: 1,
+		enabledOn: []string{"cursor"},
+		platform:  "cursor",
+	}}
+	outs := buildCanonicalHookOutputs("p", specs)
+	if len(outs) != 1 {
+		t.Fatalf("len=%d", len(outs))
+	}
+	if outs[0].Origin != "cursor" {
+		t.Fatalf("Origin=%q", outs[0].Origin)
+	}
+}
+
+func TestProcessImportOutput_preservesHookConflict(t *testing.T) {
+	agentsHome := t.TempDir()
+	t.Setenv("AGENTS_HOME", agentsHome)
+
+	srcRoot := t.TempDir()
+	srcFile := filepath.Join(srcRoot, ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(srcFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srcFile, []byte(`{"hooks":{"preToolUse":[{"command":"x","matcher":""}]}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	primary := filepath.Join(agentsHome, "hooks", "proj", "pre-tool-use-echo", "HOOK.yaml")
+	if err := os.MkdirAll(filepath.Dir(primary), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldYAML := []byte("name: old\nwhen: pre_tool_use\nrun:\n  command: old\n")
+	if err := os.WriteFile(primary, oldYAML, 0644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newYAML := []byte("name: new\nwhen: pre_tool_use\nrun:\n  command: new\n")
+	out := importOutput{
+		destRel: "hooks/proj/pre-tool-use-echo/HOOK.yaml",
+		content: newYAML,
+		Origin:  "cursor",
+	}
+	c := importCandidate{
+		project:    "proj",
+		sourceRoot: srcRoot,
+		sourcePath: srcFile,
+	}
+	res := processImportOutput(c, out, agentsHome, "20260101120000", fi)
+	if res.imported != 1 || res.skipped != 0 {
+		t.Fatalf("imported=%d skipped=%d", res.imported, res.skipped)
+	}
+	primaryBytes, err := os.ReadFile(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(primaryBytes) != string(oldYAML) {
+		t.Fatal("primary file should be preserved")
+	}
+	alt := filepath.Join(agentsHome, "hooks", "proj", "cursor-pre-tool-use-echo", "HOOK.yaml")
+	altBytes, err := os.ReadFile(alt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(altBytes) != string(newYAML) {
+		t.Fatalf("alternate content mismatch: %s", altBytes)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(agentsHome, "review-notes", "import-conflicts", "ic-*.yaml"))
+	if len(matches) != 1 {
+		t.Fatalf("expected one review note, got %d", len(matches))
+	}
+	var note importConflictReviewNote
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(raw, &note); err != nil {
+		t.Fatal(err)
+	}
+	if note.Kind != "duplicate_name" || note.Origin != "cursor" {
+		t.Fatalf("note kind=%q origin=%q", note.Kind, note.Origin)
+	}
+	if note.CanonicalTarget != out.destRel || note.AlternateTarget != "hooks/proj/cursor-pre-tool-use-echo/HOOK.yaml" {
+		t.Fatalf("note targets: %+v", note)
+	}
+}
+
+func TestProcessImportOutput_hookConflictDryRun(t *testing.T) {
+	agentsHome := t.TempDir()
+	t.Setenv("AGENTS_HOME", agentsHome)
+	oldFlags := Flags
+	t.Cleanup(func() { Flags = oldFlags })
+	Flags.DryRun = true
+
+	srcRoot := t.TempDir()
+	srcFile := filepath.Join(srcRoot, "h.json")
+	if err := os.WriteFile(srcFile, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	primary := filepath.Join(agentsHome, "hooks", "proj", "x", "HOOK.yaml")
+	if err := os.MkdirAll(filepath.Dir(primary), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(primary, []byte("a: 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := processImportOutput(importCandidate{project: "proj", sourceRoot: srcRoot, sourcePath: srcFile}, importOutput{
+		destRel: "hooks/proj/x/HOOK.yaml",
+		content: []byte("b: 2\n"),
+		Origin:  "cursor",
+	}, agentsHome, "", fi)
+	if res.imported != 1 {
+		t.Fatalf("imported=%d", res.imported)
+	}
+	if _, err := os.Stat(filepath.Join(agentsHome, "hooks", "proj", "cursor-x", "HOOK.yaml")); !os.IsNotExist(err) {
+		t.Fatal("dry-run should not write alternate")
+	}
+}
+
+func TestImportFromOpencodePluginDir(t *testing.T) {
+	tmp := t.TempDir()
+	agentsHome := filepath.Join(tmp, ".agents")
+	t.Setenv("AGENTS_HOME", agentsHome)
+
+	sourceRoot := filepath.Join(tmp, "repo")
+	sourcePath := filepath.Join(sourceRoot, relOpenCodePluginsDir, "my-plugin", "index.js")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, []byte("console.log('hello')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := processImportCandidate(importCandidate{
+		project:    "proj",
+		sourceRoot: sourceRoot,
+		sourcePath: sourcePath,
+	}, agentsHome, "20260412-120000")
+	if result.imported != 2 {
+		t.Fatalf("expected 2 imported outputs, got %+v", result)
+	}
+
+	manifestPath := filepath.Join(agentsHome, "plugins", "proj", "my-plugin", platform.PluginManifestName)
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	manifest := mustUnmarshalYAMLMap(t, content)
+	if got := manifest["kind"]; got != "native" {
+		t.Fatalf("kind = %#v, want native", got)
+	}
+	if got := manifest["name"]; got != "my-plugin" {
+		t.Fatalf("name = %#v, want my-plugin", got)
+	}
+	if got := manifest["schema_version"]; got != 1 {
+		t.Fatalf("schema_version = %#v, want 1", got)
+	}
+	filesPath := filepath.Join(agentsHome, "plugins", "proj", "my-plugin", "files", "index.js")
+	fileContent, err := os.ReadFile(filesPath)
+	if err != nil {
+		t.Fatalf("read plugin file: %v", err)
+	}
+	if string(fileContent) != "console.log('hello')\n" {
+		t.Fatalf("plugin file content mismatch: %q", string(fileContent))
+	}
+}
+
+func TestImportFromCursorPluginManifest(t *testing.T) {
+	tmp := t.TempDir()
+	agentsHome := filepath.Join(tmp, ".agents")
+	t.Setenv("AGENTS_HOME", agentsHome)
+
+	sourceRoot := filepath.Join(tmp, "repo")
+	sourcePath := filepath.Join(sourceRoot, relCursorPluginDir, "plugin.json")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(`{"name":"my-plugin","version":"1.0.0"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := processImportCandidate(importCandidate{
+		project:    "proj",
+		sourceRoot: sourceRoot,
+		sourcePath: sourcePath,
+	}, agentsHome, "20260412-120000")
+	if result.imported != 2 {
+		t.Fatalf("expected 2 imported outputs, got %+v", result)
+	}
+
+	manifestPath := filepath.Join(agentsHome, "plugins", "proj", "my-plugin", platform.PluginManifestName)
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	manifest := mustUnmarshalYAMLMap(t, content)
+	if got := manifest["kind"]; got != "package" {
+		t.Fatalf("kind = %#v, want package", got)
+	}
+	if got := manifest["version"]; got != "1.0.0" {
+		t.Fatalf("version = %#v, want 1.0.0", got)
+	}
+	platforms, ok := manifest["platforms"].([]any)
+	if !ok || len(platforms) != 1 || platforms[0] != "cursor" {
+		t.Fatalf("platforms = %#v, want [cursor]", manifest["platforms"])
+	}
+	platformJSONPath := filepath.Join(agentsHome, "plugins", "proj", "my-plugin", "platforms", "cursor", "plugin.json")
+	platformJSON, err := os.ReadFile(platformJSONPath)
+	if err != nil {
+		t.Fatalf("read platform plugin.json: %v", err)
+	}
+	if string(platformJSON) != `{"name":"my-plugin","version":"1.0.0"}` {
+		t.Fatalf("platform plugin.json mismatch: %s", string(platformJSON))
+	}
 }

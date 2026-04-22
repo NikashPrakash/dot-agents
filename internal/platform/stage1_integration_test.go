@@ -63,10 +63,34 @@ func TestClaudeCreateLinksDualSkillOutputs(t *testing.T) {
 	writeTextFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: review\ndescription: review changes\n---\n")
 	mkdirAll(t, repo)
 
+	// Shared targets are now written by the command-layer plan before CreateLinks.
+	if err := CollectAndExecuteSharedTargetPlan(fixtureProject, repo, []Platform{NewClaude()}); err != nil {
+		t.Fatalf("CollectAndExecuteSharedTargetPlan: %v", err)
+	}
 	mustCreateLinks(t, "Claude", NewClaude(), fixtureProject, repo)
 
 	assertSymlinkTarget(t, filepath.Join(repo, dirClaude, "skills", "review"), skillDir)
 	assertSymlinkTarget(t, filepath.Join(repo, dirAgents, "skills", "review"), skillDir)
+}
+
+func TestClaudeCreateLinksReplacesImportedRepoSkillDirWithManagedSymlink(t *testing.T) {
+	paths := newPlatformTestPaths(t)
+	agentsHome := paths.agentsHome
+	repo := paths.repo
+
+	skillDir := filepath.Join(agentsHome, "skills", "proj", "review")
+	writeTextFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: review\ndescription: canonical review\n---\n")
+	writeTextFile(t, filepath.Join(repo, dirAgents, "skills", "review", "SKILL.md"), "---\nname: review\ndescription: imported review\n---\n")
+
+	// Shared targets are now written by the command-layer plan before CreateLinks.
+	// The executor replaces the imported directory with a managed symlink.
+	if err := CollectAndExecuteSharedTargetPlan(fixtureProject, repo, []Platform{NewClaude()}); err != nil {
+		t.Fatalf("CollectAndExecuteSharedTargetPlan: %v", err)
+	}
+	mustCreateLinks(t, "Claude", NewClaude(), fixtureProject, repo)
+
+	assertSymlinkTarget(t, filepath.Join(repo, dirAgents, "skills", "review"), skillDir)
+	assertSymlinkTarget(t, filepath.Join(repo, dirClaude, "skills", "review"), skillDir)
 }
 
 func TestClaudeCreateLinksSymlinksGlobalAgentsIntoUserHome(t *testing.T) {
@@ -82,6 +106,24 @@ func TestClaudeCreateLinksSymlinksGlobalAgentsIntoUserHome(t *testing.T) {
 	mustCreateLinks(t, "Claude", NewClaude(), fixtureProject, repo)
 
 	assertSymlinkTarget(t, filepath.Join(home, dirClaude, "agents", "reviewer"), globalAgentDir)
+}
+
+func TestClaudeCreateLinksSymlinksProjectAgentsIntoRepoMirrors(t *testing.T) {
+	paths := newPlatformTestPaths(t)
+	agentsHome := paths.agentsHome
+	repo := paths.repo
+
+	projectAgentDir := filepath.Join(agentsHome, "agents", fixtureProject, "docbot")
+	writeTextFile(t, filepath.Join(projectAgentDir, "AGENT.md"), "# Docbot\n")
+	mkdirAll(t, repo)
+
+	if err := CollectAndExecuteSharedTargetPlan(fixtureProject, repo, []Platform{NewClaude()}); err != nil {
+		t.Fatalf("CollectAndExecuteSharedTargetPlan: %v", err)
+	}
+	mustCreateLinks(t, "Claude", NewClaude(), fixtureProject, repo)
+
+	assertSymlinkTarget(t, filepath.Join(repo, dirClaude, "agents", "docbot"), projectAgentDir)
+	assertSymlinkTarget(t, filepath.Join(repo, dirAgents, "agents", "docbot"), projectAgentDir)
 }
 
 func TestCursorCreateLinksHardlinksAndMCPSelection(t *testing.T) {
@@ -343,6 +385,10 @@ func TestHookTranslationAcrossPlatformsUsesProjectHookSources(t *testing.T) {
 	writeTextFile(t, copilotProjectHook, "{\"name\":\"pre-tool\"}\n")
 	mkdirAll(t, repo)
 
+	platforms := []Platform{NewCursor(), NewCodex(), NewClaude(), NewCopilot()}
+	if err := CollectAndExecuteSharedTargetPlan("proj", repo, platforms); err != nil {
+		t.Fatalf("CollectAndExecuteSharedTargetPlan: %v", err)
+	}
 	if err := NewCursor().CreateLinks("proj", repo); err != nil {
 		t.Fatalf("Cursor CreateLinks failed: %v", err)
 	}
@@ -381,6 +427,9 @@ func TestClaudeCompatTranslationFallsBackToSettingsBucket(t *testing.T) {
 	writeTextFile(t, globalSettings, "{\"scope\":\"global-settings\"}\n")
 	mkdirAll(t, repo)
 
+	if err := CollectAndExecuteSharedTargetPlan("proj", repo, []Platform{NewClaude(), NewCopilot()}); err != nil {
+		t.Fatalf("CollectAndExecuteSharedTargetPlan: %v", err)
+	}
 	if err := NewClaude().CreateLinks("proj", repo); err != nil {
 		t.Fatalf("Claude CreateLinks failed: %v", err)
 	}
@@ -668,6 +717,9 @@ func newPlatformTestPaths(t *testing.T) platformTestPaths {
 
 func mustCreateLinks(t *testing.T, label string, p Platform, project, repo string) {
 	t.Helper()
+	if err := CollectAndExecuteSharedTargetPlan(project, repo, []Platform{p}); err != nil {
+		t.Fatalf("%s CollectAndExecuteSharedTargetPlan: %v", label, err)
+	}
 	if err := p.CreateLinks(project, repo); err != nil {
 		t.Fatalf("%s CreateLinks failed: %v", label, err)
 	}

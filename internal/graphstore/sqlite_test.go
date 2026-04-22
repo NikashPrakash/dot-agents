@@ -222,9 +222,9 @@ func TestUpsertEdge_Update(t *testing.T) {
 
 func TestGetEdgesBySource(t *testing.T) {
 	s := openTestStore(t)
-	_ , _ = s.UpsertEdge(makeEdge("X", "Y", graphstore.EdgeKindCalls))
-	_ , _ = s.UpsertEdge(makeEdge("X", "Z", graphstore.EdgeKindImportsFrom))
-	_ , _ = s.UpsertEdge(makeEdge("W", "X", graphstore.EdgeKindCalls))
+	_, _ = s.UpsertEdge(makeEdge("X", "Y", graphstore.EdgeKindCalls))
+	_, _ = s.UpsertEdge(makeEdge("X", "Z", graphstore.EdgeKindImportsFrom))
+	_, _ = s.UpsertEdge(makeEdge("W", "X", graphstore.EdgeKindCalls))
 
 	edges, err := s.GetEdgesBySource("X")
 	if err != nil {
@@ -635,9 +635,9 @@ func TestNoteSymbolLink_Idempotent(t *testing.T) {
 
 func TestGetLinksForSymbol(t *testing.T) {
 	s := openTestStore(t)
-	_ , _ = s.UpsertNoteSymbolLink(graphstore.NoteSymbolLink{NoteID: "n1", QualifiedName: "pkg::F", LinkKind: "mentions"})
-	_ , _ = s.UpsertNoteSymbolLink(graphstore.NoteSymbolLink{NoteID: "n2", QualifiedName: "pkg::F", LinkKind: "documents"})
-	_ , _ = s.UpsertNoteSymbolLink(graphstore.NoteSymbolLink{NoteID: "n3", QualifiedName: "pkg::G", LinkKind: "mentions"})
+	_, _ = s.UpsertNoteSymbolLink(graphstore.NoteSymbolLink{NoteID: "n1", QualifiedName: "pkg::F", LinkKind: "mentions"})
+	_, _ = s.UpsertNoteSymbolLink(graphstore.NoteSymbolLink{NoteID: "n2", QualifiedName: "pkg::F", LinkKind: "documents"})
+	_, _ = s.UpsertNoteSymbolLink(graphstore.NoteSymbolLink{NoteID: "n3", QualifiedName: "pkg::G", LinkKind: "mentions"})
 
 	links, err := s.GetLinksForSymbol("pkg::F")
 	if err != nil {
@@ -680,6 +680,49 @@ func TestSQLiteStore_PersistAcrossOpen(t *testing.T) {
 	}
 	if n == nil {
 		t.Fatal("node not persisted across close/reopen")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CountNodes / CountKGNotes
+// ---------------------------------------------------------------------------
+
+func TestCountNodes_EmptyStore(t *testing.T) {
+	s := openTestStore(t)
+	if n := s.CountNodes(); n != 0 {
+		t.Errorf("expected 0 nodes in empty store, got %d", n)
+	}
+}
+
+func TestCountNodes_AfterUpsert(t *testing.T) {
+	s := openTestStore(t)
+	_, _ = s.UpsertNode(makeNode("Foo", graphstore.NodeKindFunction, "foo.go"), "")
+	_, _ = s.UpsertNode(makeNode("Bar", graphstore.NodeKindFunction, "bar.go"), "")
+	if n := s.CountNodes(); n != 2 {
+		t.Errorf("expected 2 nodes, got %d", n)
+	}
+}
+
+func TestCountKGNotes_EmptyStore(t *testing.T) {
+	s := openTestStore(t)
+	if n := s.CountKGNotes(); n != 0 {
+		t.Errorf("expected 0 KG notes in empty store, got %d", n)
+	}
+}
+
+func TestCountKGNotes_AfterUpsert(t *testing.T) {
+	s := openTestStore(t)
+	note := graphstore.KGNote{
+		ID:       "dec-001",
+		NoteType: "decision",
+		Title:    "Use Go",
+		Status:   "active",
+	}
+	if err := s.UpsertKGNote(note); err != nil {
+		t.Fatalf("UpsertKGNote: %v", err)
+	}
+	if n := s.CountKGNotes(); n != 1 {
+		t.Errorf("expected 1 KG note, got %d", n)
 	}
 }
 

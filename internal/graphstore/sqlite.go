@@ -459,8 +459,8 @@ func (s *SQLiteStore) GetImpactRadius(changedFiles []string, maxDepth, maxNodes 
 	if err != nil {
 		return ImpactResult{}, err
 	}
-	fwd := map[string][]string{}  // source → targets
-	rev := map[string][]string{}  // target → sources
+	fwd := map[string][]string{} // source → targets
+	rev := map[string][]string{} // target → sources
 	for rows.Next() {
 		var src, tgt string
 		if err := rows.Scan(&src, &tgt); err != nil {
@@ -794,4 +794,18 @@ func collectLinks(rows *sql.Rows) ([]NoteSymbolLink, error) {
 		result = append(result, l)
 	}
 	return result, rows.Err()
+}
+
+// CountNodes returns the number of nodes in the code graph.
+func (s *SQLiteStore) CountNodes() int {
+	var n int
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&n)
+	return n
+}
+
+// CountKGNotes returns the number of KG notes in the warm store.
+func (s *SQLiteStore) CountKGNotes() int {
+	var n int
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM kg_notes").Scan(&n)
+	return n
 }

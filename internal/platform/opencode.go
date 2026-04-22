@@ -47,20 +47,8 @@ func (o *opencode) CreateLinks(project, repoPath string) error {
 		links.Symlink(src, filepath.Join(repoPath, opencodeJSON))
 	}
 
-	// .opencode/agent/ definitions from canonical agents/{scope}/{name}/AGENT.md
-	agentDir := filepath.Join(repoPath, ".opencode", "agent")
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
-		return err
-	}
-
-	if err := syncScopedFileSymlinks(agentsHome, "agents", project, "AGENT.md", agentDir, ".md"); err != nil {
-		return err
-	}
-
-	// Project skills → .agents/skills/
-	if err := o.createSkillsLinks(project, repoPath, agentsHome); err != nil {
-		return err
-	}
+	// .opencode/agent/*.md and .agents/skills/ — emitted by CollectAndExecuteSharedTargetPlan
+	// via SharedTargetIntents; no direct action needed here.
 
 	return nil
 }
@@ -73,10 +61,6 @@ func (o *opencode) ensureUserAgents(agentsHome string) error {
 		}
 	}
 	return nil
-}
-
-func (o *opencode) createSkillsLinks(project, repoPath, agentsHome string) error {
-	return syncScopedDirSymlinksTargets(agentsHome, "skills", project, "SKILL.md", filepath.Join(repoPath, ".agents", "skills"))
 }
 
 func (o *opencode) RemoveLinks(project, repoPath string) error {
@@ -99,4 +83,20 @@ func (o *opencode) RemoveLinks(project, repoPath string) error {
 	}
 
 	return nil
+}
+
+func (o *opencode) SharedTargetIntents(project string) ([]ResourceIntent, error) {
+	skills, err := BuildSharedSkillMirrorIntents(project, filepath.Join(".agents", "skills"))
+	if err != nil {
+		return nil, err
+	}
+	plugins, err := BuildSharedPluginBundleIntents(project, filepath.Join(".opencode", "plugins"))
+	if err != nil {
+		return nil, err
+	}
+	agents, err := BuildSharedAgentFileSymlinkIntents(project, filepath.Join(".opencode", "agent"), ".md")
+	if err != nil {
+		return nil, err
+	}
+	return append(append(skills, plugins...), agents...), nil
 }

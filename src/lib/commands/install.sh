@@ -8,12 +8,62 @@ _INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! declare -F create_project_dirs_silent >/dev/null 2>&1; then
   source "$_INSTALL_DIR/add.sh"
 fi
-# shellcheck source=refresh.sh
-if ! declare -F write_refresh_marker >/dev/null 2>&1; then
-  source "$_INSTALL_DIR/refresh.sh"
-fi
 
 AGENTSRC_FILE=".agentsrc.json"
+
+# Merge refresh metadata into .agentsrc.json (parity with Go projectsync.WriteRefreshToAgentsRC).
+write_refresh_to_agentsrc() {
+  local project_name="$1"
+  local project_path="$2"
+  local commit="${3:-}"
+  local describe="${4:-}"
+  local manifest="$project_path/$AGENTSRC_FILE"
+  local refreshed_at
+  refreshed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || refreshed_at=$(date +"%Y-%m-%dT%H:%M:%S")
+  python3 - "$manifest" "$project_name" "${DOT_AGENTS_VERSION:-unknown}" "$commit" "$describe" "$refreshed_at" <<'PY'
+import json
+import pathlib
+import sys
+
+manifest_path = pathlib.Path(sys.argv[1])
+project_name = sys.argv[2]
+version = sys.argv[3]
+commit = sys.argv[4]
+describe = sys.argv[5]
+refreshed_at = sys.argv[6]
+
+if manifest_path.exists():
+    data = json.loads(manifest_path.read_text())
+else:
+    data = {
+        "version": 1,
+        "project": project_name,
+        "hooks": False,
+        "mcp": False,
+        "settings": False,
+        "sources": [{"type": "local"}],
+    }
+
+data.setdefault("version", 1)
+if project_name and not data.get("project"):
+    data["project"] = project_name
+data.setdefault("hooks", False)
+data.setdefault("mcp", False)
+data.setdefault("settings", False)
+if not data.get("sources"):
+    data["sources"] = [{"type": "local"}]
+
+refresh = {"version": version, "refreshedAt": refreshed_at}
+if commit:
+    refresh["commit"] = commit
+if describe:
+    refresh["describe"] = describe
+data["refresh"] = refresh
+
+manifest_path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+  rm -f "$project_path/.agents-refresh"
+}
 
 cmd_install_help() {
   cat << EOF
@@ -233,7 +283,7 @@ install_run() {
     fi
   done < <(platform_ids)
 
-  # 9. Write .agents-refresh marker
+  # 9. Update .agentsrc.json refresh metadata
   if [[ "$DRY_RUN" != true ]]; then
     local refresh_commit="" refresh_describe=""
     local repo_root
@@ -242,8 +292,8 @@ install_run() {
       refresh_commit=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null) || true
       [[ -n "$refresh_commit" ]] && refresh_describe=$(git -C "$repo_root" describe --always --tags 2>/dev/null) || true
     fi
-    write_refresh_marker "$project_path" "$refresh_commit" "$refresh_describe"
-    bullet "ok" "Wrote .agents-refresh marker"
+    write_refresh_to_agentsrc "$project_name" "$project_path" "$refresh_commit" "$refresh_describe"
+    bullet "ok" "Updated .agentsrc.json refresh details"
   fi
 
   success_with_next_steps "Project '$project_name' installed successfully!" \

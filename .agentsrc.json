@@ -1,7 +1,32 @@
 {
-  "$schema": "./schemas/agentsrc.schema.json",
-  "version": 1,
+  "$schema": "https://dot-agents.dev/schemas/agentsrc.json",
+  "agents": [
+    "test-runner",
+    "verifier",
+    "loop-worker"
+  ],
+  "app_type_verifier_map": {
+    "go-cli": [
+      "unit"
+    ]
+  },
+  "hooks": [
+    "PostToolUse"
+  ],
+  "mcp": [
+    "code-review-graph",
+    "sonarqube"
+  ],
   "project": "dot-agents",
+  "refresh": {
+    "version": "dev",
+    "refreshedAt": "2026-04-22T00:13:55Z"
+  },
+  "rules": [
+    "global",
+    "project"
+  ],
+  "settings": false,
   "skills": [
     "agent-handoff",
     "agent-start",
@@ -14,21 +39,16 @@
     "self-review",
     "skill-architect",
     "split-reviewable-commits",
-    "plan-wave-picker",
     "delegation-lifecycle",
-    "provider-consumer-pair"
+    "iteration-close",
+    "loop-worker",
+    "orchestrator-session-start",
+    "plan-wave-picker",
+    "platform-docs-refresh",
+    "provider-consumer-pair",
+    "isp",
+    "article-extract"
   ],
-  "rules": [
-    "global",
-    "project"
-  ],
-  "agents": [
-    "test-runner",
-    "verifier"
-  ],
-  "hooks": false,
-  "mcp": false,
-  "settings": false,
   "sources": [
     {
       "type": "local"
@@ -38,5 +58,14 @@
       "url": "git@github.com:NikashPrakash/agents-config.git",
       "ref": "main"
     }
-  ]
+  ],
+  "verifier_profiles": {
+    "unit": {
+      "label": "Unit (Go)",
+      "prompt_files": [
+        ".agents/prompts/verifiers/unit.project.md"
+      ]
+    }
+  },
+  "version": 1
 }

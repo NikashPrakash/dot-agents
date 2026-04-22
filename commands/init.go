@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/NikashPrakash/dot-agents/internal/config"
 	"github.com/NikashPrakash/dot-agents/internal/links"
@@ -19,7 +19,16 @@ func NewInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize ~/.agents/ directory structure",
 		Long: `Creates the ~/.agents/ directory structure with starter templates.
-Safe to run multiple times - existing files are preserved unless --force.`,
+Safe to run multiple times - existing files are preserved unless --force.
+
+Run this once per machine before using add, install, refresh, or workflow
+commands that expect the shared store to exist.`,
+		Example: ExampleBlock(
+			"  dot-agents init",
+			"  dot-agents init --dry-run",
+			"  dot-agents init --force",
+		),
+		Args: NoArgsWithHints("`dot-agents init` bootstraps the shared store and does not take a project path."),
 		RunE: runInit,
 	}
 	return cmd
@@ -72,6 +81,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		config.AgentsContextDir(),
 		filepath.Join(agentsHome, "scripts"),
 		filepath.Join(agentsHome, "local"),
+	}
+	for _, bucket := range platform.CanonicalStoreBucketSpecs() {
+		dirs = append(dirs, platform.CanonicalBucketScopeRoot(agentsHome, bucket.Name, "global"))
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0755); err != nil {
@@ -143,6 +155,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	ui.Bullet("ok", "Scaffolded starter workflow hook bundles")
 
+	if err := ensureGlobalKGMCPConfigs(agentsHome); err != nil {
+		return fmt.Errorf("scaffolding starter KG MCP configs: %w", err)
+	}
+
 	// Global Claude Code settings symlink — hooks/ takes priority over settings/
 	claudeHooksSrc := filepath.Join(agentsHome, "hooks", "global", "claude-code.json")
 	if _, err := os.Stat(claudeHooksSrc); err == nil {
@@ -199,16 +215,30 @@ func starterGitignoreContent() string {
 }
 
 func starterReadmeContent() string {
-	return "# ~/.agents/\n\nManaged by [dot-agents](https://github.com/NikashPrakash/dot-agents).\n\n" +
-		"## Stage 1 Canonical Buckets\n\n" +
-		"- `rules/` for shared instructions\n" +
-		"- `settings/` for platform settings and current Cursor ignore support\n" +
-		"- `mcp/` for MCP configs\n" +
-		"- `skills/` for canonical skills\n" +
-		"- `agents/` for canonical agent definitions\n" +
-		"- `hooks/` for canonical hook configs\n" +
-		"- `context/` for local workflow checkpoint state\n" +
-		"- `resources/` for backups and restore state\n"
+	var b strings.Builder
+	b.WriteString("# ~/.agents/\n\n")
+	b.WriteString("Managed by [dot-agents](https://github.com/NikashPrakash/dot-agents).\n\n")
+	b.WriteString("## Canonical Buckets\n\n")
+	b.WriteString("### Stage 1\n")
+	for _, bucket := range platform.CanonicalStoreStage1BucketSpecs() {
+		desc := strings.ToLower(bucket.Description)
+		if bucket.Name == platform.CanonicalBucketSettings {
+			desc = "platform settings and current Cursor ignore support"
+		}
+		b.WriteString(fmt.Sprintf("- `%s/` for %s\n", bucket.Name, desc))
+	}
+	b.WriteString("- `context/` for local workflow checkpoint state\n")
+	b.WriteString("- `resources/` for backups and restore state\n\n")
+	b.WriteString("### Stage 2 scaffold\n")
+	for _, bucket := range platform.CanonicalStoreStage2BucketSpecs() {
+		desc := strings.ToLower(bucket.Description)
+		if bucket.Name == platform.CanonicalBucketIgnore {
+			desc = "cursorignore / cursorindexingignore files"
+		}
+		b.WriteString(fmt.Sprintf("- `%s/` for %s\n", bucket.Name, desc))
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 func scaffoldWorkflowAssets(agentsHome string) error {
@@ -216,19 +246,4 @@ func scaffoldWorkflowAssets(agentsHome string) error {
 		return err
 	}
 	return scaffoldhooks.CopyMissingGlobalBundles(filepath.Join(agentsHome, "hooks", "global"))
-}
-
-// refreshMarkerContent generates the .agents-refresh marker file content.
-func refreshMarkerContent(version, commit, describe string) []byte {
-	now := time.Now().UTC().Format(time.RFC3339)
-	content := "# dot-agents refresh marker — do not edit\n"
-	content += "version=" + version + "\n"
-	if commit != "" {
-		content += "commit=" + commit + "\n"
-	}
-	if describe != "" {
-		content += "describe=" + describe + "\n"
-	}
-	content += "refreshed_at=" + now + "\n"
-	return []byte(content)
 }

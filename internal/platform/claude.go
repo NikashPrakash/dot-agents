@@ -286,19 +286,21 @@ func (c *claude) ensureUserSkills(agentsHome string) error {
 }
 
 func (c *claude) createAgentsLinks(project, repoPath, agentsHome string) error {
-	return syncScopedDirSymlinksTargets(agentsHome, "agents", project, "AGENT.md", filepath.Join(repoPath, claudeDir, "agents"))
+	// Mirror ~/.agents/agents/<project>/<name>/ into the repo (same model as ensureUserSkills /
+	// syncScopedDirSymlinks). Shared-target projection may already create `.claude/agents/*`;
+	// this pass also ensures `.agents/agents/*` and heals incorrect symlinks idempotently.
+	return syncScopedDirSymlinksTargets(agentsHome, "agents", project, "AGENT.md",
+		filepath.Join(repoPath, ".agents", "agents"),
+		filepath.Join(repoPath, claudeDir, "agents"),
+	)
 }
 
 func (c *claude) createSkillsLinks(project, repoPath, agentsHome string) error {
+	// Shared repo targets (.claude/skills/*, .agents/skills/*) are now written
+	// by CollectAndExecuteSharedTargetPlan at the command layer before
+	// CreateLinks is called. This method only handles user-home skill links.
 	c.ensureUserSkills(agentsHome)
-	return syncScopedDirSymlinksTargets(
-		agentsHome,
-		"skills",
-		project,
-		"SKILL.md",
-		filepath.Join(repoPath, claudeDir, "skills"),
-		filepath.Join(repoPath, ".agents", "skills"),
-	)
+	return nil
 }
 
 func (c *claude) RemoveLinks(project, repoPath string) error {
@@ -358,4 +360,22 @@ func isClaudeAgentDir(path string) bool {
 func isSymlink(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
+func (c *claude) SharedTargetIntents(project string) ([]ResourceIntent, error) {
+	skills, err := BuildSharedSkillMirrorIntents(project,
+		filepath.Join(claudeDir, "skills"),
+		filepath.Join(".agents", "skills"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	agents, err := BuildSharedAgentMirrorIntents(project, filepath.Join(claudeDir, "agents"))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ResourceIntent, 0, len(skills)+len(agents))
+	out = append(out, skills...)
+	out = append(out, agents...)
+	return out, nil
 }
