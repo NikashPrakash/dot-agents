@@ -52,12 +52,20 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(NewSkillsCmd())
 	root.AddCommand(NewAgentsCmd())
 	root.AddCommand(NewHooksCmd())
+	root.AddCommand(NewRulesCmd())
+	root.AddCommand(NewMCPCmd())
+	root.AddCommand(NewSettingsCmd())
+	root.AddCommand(NewWorkflowCmd())
+	root.AddCommand(NewReviewCmd())
 	root.AddCommand(NewSyncCmd())
 	root.AddCommand(NewExplainCmd())
 	root.AddCommand(NewInstallCmd())
+	root.AddCommand(NewKGCmd())
+	root.AddCommand(NewSessionCmd())
 
 	root.SetErr(os.Stderr)
 	root.SetOut(os.Stdout)
+	ConfigureRootCommandUX(root)
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		return nil
