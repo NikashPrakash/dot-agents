@@ -679,6 +679,171 @@ func TestHookOutcomeRecordKey(t *testing.T) {
 	}
 }
 
+// ── runHookOutcomeWrite end-to-end (CLI handler) tests ──────────────────────
+
+func newValidHookOutcomeWriteInputs() hookOutcomeWriteInputs {
+	return hookOutcomeWriteInputs{
+		SentinelID:        "iteration-close-r1",
+		Skill:             "iteration-close",
+		LifecyclePoint:    "stop",
+		InterventionClass: "remediate_at_stop",
+		Result:            "remediate",
+		RuleID:            "iteration-close.R1.1",
+		Platform:          "claude",
+		TS:                "2026-05-26T12:00:00Z",
+		CorrelationID:     "iteration-close-r1",
+	}
+}
+
+func withHookOutcomeProject(t *testing.T, path string) {
+	t.Helper()
+	prior := hookOutcomeResolveProject
+	hookOutcomeResolveProject = func() (workflowProjectRef, error) {
+		return workflowProjectRef{Name: "p", Path: path}, nil
+	}
+	t.Cleanup(func() { hookOutcomeResolveProject = prior })
+}
+
+func captureStdoutString(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	fn()
+	_ = w.Close()
+	os.Stdout = old
+	var buf strings.Builder
+	b := make([]byte, 4096)
+	for {
+		n, err := r.Read(b)
+		if n > 0 {
+			buf.Write(b[:n])
+		}
+		if err != nil {
+			break
+		}
+	}
+	return buf.String()
+}
+
+func TestRunHookOutcomeWrite_WrittenText(t *testing.T) {
+	dir := setupProjectWithIter(t, 3)
+	withHookOutcomeProject(t, dir)
+	out := captureStdoutString(t, func() {
+		if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+			t.Fatalf("runHookOutcomeWrite: %v", err)
+		}
+	})
+	if !strings.Contains(out, "wrote hook outcome") || !strings.Contains(out, "iter-3") {
+		t.Errorf("text output missing written marker / iter-3: %q", out)
+	}
+}
+
+func TestRunHookOutcomeWrite_WrittenJSON(t *testing.T) {
+	dir := setupProjectWithIter(t, 2)
+	withHookOutcomeProject(t, dir)
+	prior := deps.Flags.JSON
+	deps.Flags.JSON = func() bool { return true }
+	t.Cleanup(func() { deps.Flags.JSON = prior })
+	out := captureStdoutString(t, func() {
+		if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+			t.Fatalf("runHookOutcomeWrite: %v", err)
+		}
+	})
+	if !strings.Contains(out, `"status": "written"`) || !strings.Contains(out, `"iteration": 2`) {
+		t.Errorf("JSON output missing written/iteration field: %q", out)
+	}
+}
+
+func TestRunHookOutcomeWrite_DuplicateText(t *testing.T) {
+	dir := setupProjectWithIter(t, 1)
+	withHookOutcomeProject(t, dir)
+	if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	out := captureStdoutString(t, func() {
+		if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+			t.Fatalf("second write: %v", err)
+		}
+	})
+	if !strings.Contains(out, "duplicate hook outcome") {
+		t.Errorf("expected duplicate marker, got %q", out)
+	}
+}
+
+func TestRunHookOutcomeWrite_DuplicateJSON(t *testing.T) {
+	dir := setupProjectWithIter(t, 1)
+	withHookOutcomeProject(t, dir)
+	if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	prior := deps.Flags.JSON
+	deps.Flags.JSON = func() bool { return true }
+	t.Cleanup(func() { deps.Flags.JSON = prior })
+	out := captureStdoutString(t, func() {
+		if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+			t.Fatalf("second: %v", err)
+		}
+	})
+	if !strings.Contains(out, `"status": "duplicate"`) {
+		t.Errorf("expected JSON duplicate status, got %q", out)
+	}
+}
+
+func TestRunHookOutcomeWrite_NoActiveIterationText(t *testing.T) {
+	// Empty project: no iter-log dir → stderr advisory, exit 0, no stdout body.
+	dir := t.TempDir()
+	withHookOutcomeProject(t, dir)
+	stderr := captureStderr(t, func() {
+		if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+			t.Fatalf("runHookOutcomeWrite: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "no active iteration") {
+		t.Errorf("expected no-active-iteration stderr advisory, got %q", stderr)
+	}
+}
+
+func TestRunHookOutcomeWrite_NoActiveIterationJSON(t *testing.T) {
+	dir := t.TempDir()
+	withHookOutcomeProject(t, dir)
+	prior := deps.Flags.JSON
+	deps.Flags.JSON = func() bool { return true }
+	t.Cleanup(func() { deps.Flags.JSON = prior })
+	out := captureStdoutString(t, func() {
+		if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err != nil {
+			t.Fatalf("runHookOutcomeWrite: %v", err)
+		}
+	})
+	if !strings.Contains(out, `"status": "no-active-iteration"`) {
+		t.Errorf("expected JSON no-active-iteration status, got %q", out)
+	}
+}
+
+func TestRunHookOutcomeWrite_ResolveProjectError(t *testing.T) {
+	prior := hookOutcomeResolveProject
+	hookOutcomeResolveProject = func() (workflowProjectRef, error) {
+		return workflowProjectRef{}, errors.New("boom")
+	}
+	t.Cleanup(func() { hookOutcomeResolveProject = prior })
+	if err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs()); err == nil {
+		t.Fatal("expected error from resolve project, got nil")
+	}
+}
+
+func TestRunHookOutcomeWrite_BadInputBuildError(t *testing.T) {
+	dir := setupProjectWithIter(t, 1)
+	withHookOutcomeProject(t, dir)
+	bad := newValidHookOutcomeWriteInputs()
+	bad.Skill = "not-a-real-skill"
+	if err := runHookOutcomeWrite(bad); err == nil {
+		t.Fatal("expected buildHookOutcomeRecord error, got nil")
+	}
+}
+
 // ── hookOutcomeSidecarPath helper ────────────────────────────────────────────
 
 func TestHookOutcomeSidecarPath(t *testing.T) {

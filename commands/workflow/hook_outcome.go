@@ -89,11 +89,12 @@ var workflowHookOutcomeSchemaJSON []byte
 // (rename failure mid-publish, malformed prior sidecar reads, etc.) without
 // expanding the shared seams.go list. Each is rebound under t.Cleanup.
 var (
-	hookOutcomeNow      = func() time.Time { return time.Now() }
-	hookOutcomeReadFile = os.ReadFile
-	hookOutcomeRename   = os.Rename
-	hookOutcomeRemove   = os.Remove
-	hookOutcomeReadDir  = os.ReadDir
+	hookOutcomeNow            = func() time.Time { return time.Now() }
+	hookOutcomeReadFile       = os.ReadFile
+	hookOutcomeRename         = os.Rename
+	hookOutcomeRemove         = os.Remove
+	hookOutcomeReadDir        = os.ReadDir
+	hookOutcomeResolveProject = currentWorkflowProject
 )
 
 var (
@@ -447,7 +448,7 @@ func hookOutcomeRecordKey(rec HookOutcomeRecord) string {
 // the R2.4 timeout via a deadlined goroutine, applies the no-iteration
 // silent-exit behaviour, and renders JSON or human output.
 func runHookOutcomeWrite(in hookOutcomeWriteInputs) error {
-	project, err := currentWorkflowProject()
+	project, err := hookOutcomeResolveProject()
 	if err != nil {
 		return err
 	}
