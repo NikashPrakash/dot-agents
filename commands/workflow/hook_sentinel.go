@@ -288,12 +288,26 @@ func readLatestHookSentinel(hsd hookSentinelDeps, projectPath, skill string) (*H
 		return nil, "", fmt.Errorf("invalid skill %q (allowed: iteration-close, isp, loop-worker)", skill)
 	}
 	dir := hookSentinelActiveDir(projectPath)
+	candidates, err := listHookSentinelCandidates(hsd, dir, skill)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(candidates) == 0 {
+		return nil, "", fmt.Errorf("no hook sentinels for skill %q", skill)
+	}
+	return pickLatestHookSentinel(hsd, dir, candidates)
+}
+
+// listHookSentinelCandidates enumerates filename matches for the skill in dir.
+// Returns a wrapped error on non-IsNotExist readdir failure; absent dir
+// short-circuits to a skill-specific "no sentinels" error.
+func listHookSentinelCandidates(hsd hookSentinelDeps, dir, skill string) ([]string, error) {
 	entries, err := hsd.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, "", fmt.Errorf("no hook sentinels for skill %q (directory missing)", skill)
+			return nil, fmt.Errorf("no hook sentinels for skill %q (directory missing)", skill)
 		}
-		return nil, "", fmt.Errorf("list hook sentinel dir: %w", err)
+		return nil, fmt.Errorf("list hook sentinel dir: %w", err)
 	}
 	prefix := skill + "-"
 	var candidates []string
@@ -307,10 +321,13 @@ func readLatestHookSentinel(hsd hookSentinelDeps, projectPath, skill string) (*H
 		}
 		candidates = append(candidates, name)
 	}
-	if len(candidates) == 0 {
-		return nil, "", fmt.Errorf("no hook sentinels for skill %q", skill)
-	}
-	// Stable filename sort breaks ties when started_at compares equal.
+	return candidates, nil
+}
+
+// pickLatestHookSentinel reads each candidate and returns the one with the
+// largest started_at (stable filename tie-break). Caller ensures candidates
+// is non-empty.
+func pickLatestHookSentinel(hsd hookSentinelDeps, dir string, candidates []string) (*HookSentinelDoc, string, error) {
 	sort.Strings(candidates)
 	var best *HookSentinelDoc
 	var bestPath string
@@ -321,14 +338,23 @@ func readLatestHookSentinel(hsd hookSentinelDeps, projectPath, skill string) (*H
 		if err != nil {
 			return nil, "", err
 		}
-		if best == nil || doc.StartedAt > bestStarted ||
-			(doc.StartedAt == bestStarted && filepath.Base(path) > filepath.Base(bestPath)) {
+		if isMoreRecentSentinel(doc, best, path, bestPath, bestStarted) {
 			best = doc
 			bestPath = path
 			bestStarted = doc.StartedAt
 		}
 	}
 	return best, bestPath, nil
+}
+
+func isMoreRecentSentinel(doc, best *HookSentinelDoc, path, bestPath, bestStarted string) bool {
+	if best == nil {
+		return true
+	}
+	if doc.StartedAt > bestStarted {
+		return true
+	}
+	return doc.StartedAt == bestStarted && filepath.Base(path) > filepath.Base(bestPath)
 }
 
 // clearHookSentinel archives the active record under
@@ -481,6 +507,19 @@ func runHookSentinelRead(hsd hookSentinelDeps, skill, runID string, latest, asJS
 	if err != nil {
 		return err
 	}
+	if err := validateHookSentinelReadSelectors(skill, runID, latest); err != nil {
+		return err
+	}
+	doc, path, err := resolveHookSentinelRead(hsd, project.Path, skill, runID, latest)
+	if err != nil {
+		return err
+	}
+	return renderHookSentinelRead(doc, path, asJSON)
+}
+
+// validateHookSentinelReadSelectors enforces the input contract for `read`:
+// known skill, exactly one of --latest / --run-id supplied.
+func validateHookSentinelReadSelectors(skill, runID string, latest bool) error {
 	if !validHookSentinelSkill(skill) {
 		return fmt.Errorf("invalid skill %q (allowed: iteration-close, isp, loop-worker)", skill)
 	}
@@ -490,23 +529,28 @@ func runHookSentinelRead(hsd hookSentinelDeps, skill, runID string, latest, asJS
 	if !latest && strings.TrimSpace(runID) == "" {
 		return fmt.Errorf("read requires either --run-id or --latest")
 	}
-	var doc *HookSentinelDoc
-	var path string
+	return nil
+}
+
+// resolveHookSentinelRead picks between --latest and --run-id and returns
+// the loaded document.
+func resolveHookSentinelRead(hsd hookSentinelDeps, projectPath, skill, runID string, latest bool) (*HookSentinelDoc, string, error) {
 	if latest {
-		doc, path, err = readLatestHookSentinel(hsd, project.Path, skill)
-		if err != nil {
-			return err
-		}
-	} else {
-		path, err = hookSentinelActivePath(project.Path, skill, runID)
-		if err != nil {
-			return err
-		}
-		doc, err = readHookSentinel(hsd, path)
-		if err != nil {
-			return err
-		}
+		return readLatestHookSentinel(hsd, projectPath, skill)
 	}
+	path, err := hookSentinelActivePath(projectPath, skill, runID)
+	if err != nil {
+		return nil, "", err
+	}
+	doc, err := readHookSentinel(hsd, path)
+	if err != nil {
+		return nil, "", err
+	}
+	return doc, path, nil
+}
+
+// renderHookSentinelRead emits the JSON or human-readable representation.
+func renderHookSentinelRead(doc *HookSentinelDoc, path string, asJSON bool) error {
 	if asJSON || deps.Flags.JSON() {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

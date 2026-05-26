@@ -26,6 +26,15 @@ import (
 // iter-N.hook-outcomes.yaml sidecar.
 const HookOutcomeSchemaVersion = 1
 
+// hookOutcomeAppendResult.Status enum values. Constants so the JSON output
+// shape, the doc comments on hookOutcomeAppendResult, and the runner's
+// switch arms all reference the same literal.
+const (
+	hookOutcomeStatusWritten           = "written"
+	hookOutcomeStatusDuplicate         = "duplicate"
+	hookOutcomeStatusNoActiveIteration = "no-active-iteration"
+)
+
 // hookOutcomeWriteTimeout bounds the entire write operation per R2.4 (the
 // upstream R5.4 hook budget of 8000ms in loop-discipline-stop-hooks). The
 // CLI exceeds this only as a sanity ceiling; real filesystem ops complete in
@@ -78,9 +87,6 @@ var hookOutcomeAllowedPlatforms = map[string]struct{}{
 
 // hookOutcomeRuleIDPattern mirrors the schema regex for rule_id.
 var hookOutcomeRuleIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)+$`)
-
-//go:embed static/workflow-hook-outcome.schema.json
-var workflowHookOutcomeSchemaJSON []byte
 
 // hookOutcomeDeps is the narrow collaborator the hook-outcome CLI needs
 // (interface-DI per docs/TEST_SEAMS.md; mirrors commands/review.go's
@@ -389,9 +395,9 @@ func buildHookOutcomeRecord(hod hookOutcomeDeps, in hookOutcomeWriteInputs) (Hoo
 // the caller (CLI handler or test) can distinguish "appended", "duplicate
 // idempotent no-op", and "no active iteration" without parsing stderr.
 type hookOutcomeAppendResult struct {
-	Status     string // "written" | "duplicate" | "no-active-iteration"
-	Path       string // sidecar path (empty when status == "no-active-iteration")
-	Iteration  int    // active N (zero when status == "no-active-iteration")
+	Status     string // one of hookOutcomeStatus{Written,Duplicate,NoActiveIteration}
+	Path       string // sidecar path (empty when status == hookOutcomeStatusNoActiveIteration)
+	Iteration  int    // active N (zero when status == hookOutcomeStatusNoActiveIteration)
 	RecordHash string // (sentinel_id, rule_id, lifecycle_point, intervention_class) joined for readback
 }
 
@@ -405,7 +411,7 @@ func appendHookOutcome(hod hookOutcomeDeps, projectPath string, rec HookOutcomeR
 		return hookOutcomeAppendResult{}, err
 	}
 	if !active {
-		return hookOutcomeAppendResult{Status: "no-active-iteration"}, nil
+		return hookOutcomeAppendResult{Status: hookOutcomeStatusNoActiveIteration}, nil
 	}
 	path := hookOutcomeSidecarPath(projectPath, n)
 	sc, err := loadHookOutcomeSidecar(hod, path)
@@ -415,7 +421,7 @@ func appendHookOutcome(hod hookOutcomeDeps, projectPath string, rec HookOutcomeR
 	for _, existing := range sc.Records {
 		if hookOutcomeIdempotencyKeyMatches(existing, rec) {
 			return hookOutcomeAppendResult{
-				Status:     "duplicate",
+				Status:     hookOutcomeStatusDuplicate,
 				Path:       path,
 				Iteration:  n,
 				RecordHash: hookOutcomeRecordKey(rec),
@@ -427,7 +433,7 @@ func appendHookOutcome(hod hookOutcomeDeps, projectPath string, rec HookOutcomeR
 		return hookOutcomeAppendResult{}, err
 	}
 	return hookOutcomeAppendResult{
-		Status:     "written",
+		Status:     hookOutcomeStatusWritten,
 		Path:       path,
 		Iteration:  n,
 		RecordHash: hookOutcomeRecordKey(rec),
@@ -482,7 +488,7 @@ func runHookOutcomeWrite(hod hookOutcomeDeps, in hookOutcomeWriteInputs) error {
 	}
 
 	switch out.res.Status {
-	case "no-active-iteration":
+	case hookOutcomeStatusNoActiveIteration:
 		// Per R2.2: silent exit 0 with stderr advisory; the sentinel was
 		// active but no iteration log exists yet, so this outcome is
 		// session-only and dropped from scoring.
@@ -491,16 +497,16 @@ func runHookOutcomeWrite(hod hookOutcomeDeps, in hookOutcomeWriteInputs) error {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			return enc.Encode(map[string]any{
-				"status": "no-active-iteration",
+				"status": hookOutcomeStatusNoActiveIteration,
 			})
 		}
 		return nil
-	case "duplicate":
+	case hookOutcomeStatusDuplicate:
 		if deps.Flags.JSON() {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			return enc.Encode(map[string]any{
-				"status":     "duplicate",
+				"status":     hookOutcomeStatusDuplicate,
 				"path":       out.res.Path,
 				"iteration":  out.res.Iteration,
 				"record_key": out.res.RecordHash,
@@ -508,12 +514,12 @@ func runHookOutcomeWrite(hod hookOutcomeDeps, in hookOutcomeWriteInputs) error {
 		}
 		fmt.Fprintf(os.Stdout, "duplicate hook outcome (idempotent no-op): %s\n", out.res.Path)
 		return nil
-	case "written":
+	case hookOutcomeStatusWritten:
 		if deps.Flags.JSON() {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			return enc.Encode(map[string]any{
-				"status":     "written",
+				"status":     hookOutcomeStatusWritten,
 				"path":       out.res.Path,
 				"iteration":  out.res.Iteration,
 				"record_key": out.res.RecordHash,
