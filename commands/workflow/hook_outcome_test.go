@@ -426,6 +426,52 @@ func TestResolveActiveIterationN_PicksMax(t *testing.T) {
 	}
 }
 
+func TestResolveActiveIterationN_SkipsDirsAndNonMatching(t *testing.T) {
+	dir := t.TempDir()
+	iterDir := filepath.Join(dir, ".agents", "active", "iteration-log")
+	if err := os.MkdirAll(iterDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A subdirectory under iter-log: must be skipped.
+	if err := os.Mkdir(filepath.Join(iterDir, "iter-99-subdir"), 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	// A non-numeric iter-* file: regex matches but Sscanf rejects it.
+	// (Using a non-iter-* file is also fine, covered by the regex no-match branch.)
+	if err := os.WriteFile(filepath.Join(iterDir, "iter-2.yaml"), []byte("schema_version: 2\n"), 0o644); err != nil {
+		t.Fatalf("write iter-2: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(iterDir, "stray-file.txt"), []byte("noise"), 0o644); err != nil {
+		t.Fatalf("write stray: %v", err)
+	}
+	n, active, err := resolveActiveIterationN(dir)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !active || n != 2 {
+		t.Errorf("expected (n=2, active=true), got (n=%d, active=%v)", n, active)
+	}
+}
+
+func TestLoadHookOutcomeSidecar_NilRecordsNormalizedToEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "iter-1.hook-outcomes.yaml")
+	// Sidecar with explicit schema_version but no records key at all.
+	if err := os.WriteFile(path, []byte("schema_version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := loadHookOutcomeSidecar(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Records == nil {
+		t.Error("expected normalized empty slice, got nil")
+	}
+	if len(got.Records) != 0 {
+		t.Errorf("expected 0 records, got %d", len(got.Records))
+	}
+}
+
 func TestResolveActiveIterationN_ReadDirError(t *testing.T) {
 	t.Cleanup(func() { hookOutcomeReadDir = os.ReadDir })
 	hookOutcomeReadDir = func(string) ([]os.DirEntry, error) {
@@ -679,6 +725,151 @@ func TestHookOutcomeRecordKey(t *testing.T) {
 	}
 }
 
+// ── writeHookOutcomeSidecar seam-injection tests ─────────────────────────────
+
+func TestWriteHookOutcomeSidecar_ValidationFailsBeforeDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "iter-1.hook-outcomes.yaml")
+	bad := &HookOutcomeSidecar{SchemaVersion: 1, Records: []HookOutcomeRecord{{SentinelID: "x"}}}
+	if err := writeHookOutcomeSidecar(path, bad); err == nil {
+		t.Fatal("expected validation error for malformed record")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("expected no file written on validation failure, stat err=%v", statErr)
+	}
+}
+
+func TestWriteHookOutcomeSidecar_NilSidecar(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "iter-1.hook-outcomes.yaml")
+	if err := writeHookOutcomeSidecar(path, nil); err == nil {
+		t.Fatal("expected error for nil sidecar")
+	}
+}
+
+func TestWriteHookOutcomeSidecar_YamlMarshalError(t *testing.T) {
+	prior := yamlMarshal
+	yamlMarshal = func(any) ([]byte, error) { return nil, errors.New("synthetic marshal fault") }
+	t.Cleanup(func() { yamlMarshal = prior })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "iter-1.hook-outcomes.yaml")
+	err := writeHookOutcomeSidecar(path, newValidHookOutcomeSidecar())
+	if err == nil || !strings.Contains(err.Error(), "marshal hook outcome sidecar") {
+		t.Errorf("expected wrapped marshal error, got %v", err)
+	}
+}
+
+func TestWriteHookOutcomeSidecar_MkdirError(t *testing.T) {
+	prior := osMkdirAll
+	osMkdirAll = func(string, os.FileMode) error { return errors.New("synthetic mkdir fault") }
+	t.Cleanup(func() { osMkdirAll = prior })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "subdir", "iter-1.hook-outcomes.yaml")
+	err := writeHookOutcomeSidecar(path, newValidHookOutcomeSidecar())
+	if err == nil || !strings.Contains(err.Error(), "prepare hook outcome dir") {
+		t.Errorf("expected wrapped mkdir error, got %v", err)
+	}
+}
+
+func TestWriteHookOutcomeSidecar_TempWriteError(t *testing.T) {
+	prior := osWriteFile
+	osWriteFile = func(string, []byte, os.FileMode) error { return errors.New("synthetic write fault") }
+	t.Cleanup(func() { osWriteFile = prior })
+	dir := t.TempDir()
+	path := filepath.Join(dir, "iter-1.hook-outcomes.yaml")
+	err := writeHookOutcomeSidecar(path, newValidHookOutcomeSidecar())
+	if err == nil || !strings.Contains(err.Error(), "write hook outcome temp") {
+		t.Errorf("expected wrapped temp write error, got %v", err)
+	}
+}
+
+func TestWriteHookOutcomeSidecar_RenameErrorCleansUpTemp(t *testing.T) {
+	prior := hookOutcomeRename
+	priorRemove := hookOutcomeRemove
+	hookOutcomeRename = func(string, string) error { return errors.New("synthetic rename fault") }
+	removeCalled := 0
+	hookOutcomeRemove = func(name string) error {
+		removeCalled++
+		return os.Remove(name)
+	}
+	t.Cleanup(func() {
+		hookOutcomeRename = prior
+		hookOutcomeRemove = priorRemove
+	})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "iter-1.hook-outcomes.yaml")
+	err := writeHookOutcomeSidecar(path, newValidHookOutcomeSidecar())
+	if err == nil || !strings.Contains(err.Error(), "publish hook outcome sidecar") {
+		t.Errorf("expected wrapped rename error, got %v", err)
+	}
+	if removeCalled != 1 {
+		t.Errorf("expected exactly one cleanup remove call, got %d", removeCalled)
+	}
+	if _, statErr := os.Stat(path + ".tmp"); !os.IsNotExist(statErr) {
+		t.Errorf("expected temp file cleaned up after rename failure, stat err=%v", statErr)
+	}
+}
+
+func TestLoadHookOutcomeSidecar_ReadErrorPropagates(t *testing.T) {
+	prior := hookOutcomeReadFile
+	hookOutcomeReadFile = func(string) ([]byte, error) {
+		return nil, errors.New("synthetic read fault")
+	}
+	t.Cleanup(func() { hookOutcomeReadFile = prior })
+	_, err := loadHookOutcomeSidecar(filepath.Join(t.TempDir(), "iter-1.hook-outcomes.yaml"))
+	if err == nil || !strings.Contains(err.Error(), "read hook outcome sidecar") {
+		t.Errorf("expected wrapped non-IsNotExist read error, got %v", err)
+	}
+}
+
+// ── appendHookOutcome error-propagation tests ────────────────────────────────
+
+func TestAppendHookOutcome_ResolveIterationError(t *testing.T) {
+	prior := hookOutcomeReadDir
+	hookOutcomeReadDir = func(string) ([]os.DirEntry, error) {
+		return nil, errors.New("synthetic readdir fault")
+	}
+	t.Cleanup(func() { hookOutcomeReadDir = prior })
+	_, err := appendHookOutcome(t.TempDir(), newValidHookOutcomeRecord())
+	if err == nil || !strings.Contains(err.Error(), "read iteration-log dir") {
+		t.Errorf("expected wrapped readdir error, got %v", err)
+	}
+}
+
+func TestAppendHookOutcome_LoadSidecarError(t *testing.T) {
+	dir := setupProjectWithIter(t, 1)
+	prior := hookOutcomeReadFile
+	hookOutcomeReadFile = func(string) ([]byte, error) {
+		return nil, errors.New("synthetic read fault")
+	}
+	t.Cleanup(func() { hookOutcomeReadFile = prior })
+	_, err := appendHookOutcome(dir, newValidHookOutcomeRecord())
+	if err == nil || !strings.Contains(err.Error(), "read hook outcome sidecar") {
+		t.Errorf("expected wrapped sidecar read error, got %v", err)
+	}
+}
+
+func TestAppendHookOutcome_WriteSidecarError(t *testing.T) {
+	dir := setupProjectWithIter(t, 1)
+	prior := hookOutcomeRename
+	hookOutcomeRename = func(string, string) error { return errors.New("synthetic rename fault") }
+	t.Cleanup(func() { hookOutcomeRename = prior })
+	_, err := appendHookOutcome(dir, newValidHookOutcomeRecord())
+	if err == nil || !strings.Contains(err.Error(), "publish hook outcome sidecar") {
+		t.Errorf("expected wrapped publish error, got %v", err)
+	}
+}
+
+func TestValidateHookOutcomeSidecar_JSONMarshalError(t *testing.T) {
+	prior := jsonMarshal
+	jsonMarshal = func(any) ([]byte, error) { return nil, errors.New("synthetic json marshal fault") }
+	t.Cleanup(func() { jsonMarshal = prior })
+	err := validateHookOutcomeSidecar(newValidHookOutcomeSidecar())
+	if err == nil || !strings.Contains(err.Error(), "marshal hook outcome for schema validation") {
+		t.Errorf("expected wrapped json-marshal error, got %v", err)
+	}
+}
+
 // ── runHookOutcomeWrite end-to-end (CLI handler) tests ──────────────────────
 
 func newValidHookOutcomeWriteInputs() hookOutcomeWriteInputs {
@@ -820,6 +1011,18 @@ func TestRunHookOutcomeWrite_NoActiveIterationJSON(t *testing.T) {
 	})
 	if !strings.Contains(out, `"status": "no-active-iteration"`) {
 		t.Errorf("expected JSON no-active-iteration status, got %q", out)
+	}
+}
+
+func TestRunHookOutcomeWrite_AppendErrorPropagates(t *testing.T) {
+	dir := setupProjectWithIter(t, 1)
+	withHookOutcomeProject(t, dir)
+	prior := hookOutcomeRename
+	hookOutcomeRename = func(string, string) error { return errors.New("synthetic publish fault") }
+	t.Cleanup(func() { hookOutcomeRename = prior })
+	err := runHookOutcomeWrite(newValidHookOutcomeWriteInputs())
+	if err == nil || !strings.Contains(err.Error(), "publish hook outcome sidecar") {
+		t.Errorf("expected wrapped publish error, got %v", err)
 	}
 }
 
