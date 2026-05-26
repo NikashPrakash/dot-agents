@@ -15,10 +15,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cobra"
 	"go.yaml.in/yaml/v3"
 )
@@ -84,32 +82,36 @@ var hookOutcomeRuleIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*(?:\.[A-Za-z0
 //go:embed static/workflow-hook-outcome.schema.json
 var workflowHookOutcomeSchemaJSON []byte
 
-// File-local seams for the hook-outcome CLI. Mirrors the pattern in
-// hook_sentinel.go so tests can drive otherwise unreachable error branches
-// (rename failure mid-publish, malformed prior sidecar reads, etc.) without
-// expanding the shared seams.go list. Each is rebound under t.Cleanup.
-var (
-	hookOutcomeNow            = func() time.Time { return time.Now() }
-	hookOutcomeReadFile       = os.ReadFile
-	hookOutcomeRename         = os.Rename
-	hookOutcomeRemove         = os.Remove
-	hookOutcomeReadDir        = os.ReadDir
-	hookOutcomeResolveProject = currentWorkflowProject
-)
+// hookOutcomeDeps is the narrow collaborator the hook-outcome CLI needs
+// (interface-DI per docs/TEST_SEAMS.md; mirrors commands/review.go's
+// reviewDeps pattern). One interface covers the os-level fault injection
+// points (ReadFile/ReadDir/Rename/Remove), the workflow-project resolver,
+// and the clock so the runner has a single fault-injection surface.
+// File-scoped — do not share with other commands/workflow files.
+type hookOutcomeDeps interface {
+	Now() time.Time
+	ReadFile(name string) ([]byte, error)
+	ReadDir(name string) ([]os.DirEntry, error)
+	Rename(oldpath, newpath string) error
+	Remove(name string) error
+	ResolveProject() (workflowProjectRef, error)
+}
 
-var (
-	workflowHookOutcomeCompiled     *jsonschema.Schema
-	workflowHookOutcomeCompiledOnce sync.Once
-	workflowHookOutcomeCompiledErr  error
-)
+// stdHookOutcomeDeps is the production hookOutcomeDeps backed by the os
+// package and currentWorkflowProject. Zero-value usable; tests construct
+// fakeHookOutcomeDeps{} (see hook_outcome_test.go) where each nil-func
+// field delegates to this default.
+type stdHookOutcomeDeps struct{}
 
-func compiledWorkflowHookOutcomeSchema(sc schemaCompiler) (*jsonschema.Schema, error) {
-	workflowHookOutcomeCompiledOnce.Do(func() {
-		const schemaURL = "./schemas/workflow-hook-outcome.schema.json"
-		workflowHookOutcomeCompiled, workflowHookOutcomeCompiledErr = compileEmbeddedSchema(
-			sc, workflowHookOutcomeSchemaJSON, schemaURL, "workflow-hook-outcome")
-	})
-	return workflowHookOutcomeCompiled, workflowHookOutcomeCompiledErr
+func (stdHookOutcomeDeps) Now() time.Time                       { return time.Now() }
+func (stdHookOutcomeDeps) ReadFile(name string) ([]byte, error) { return os.ReadFile(name) }
+func (stdHookOutcomeDeps) ReadDir(name string) ([]os.DirEntry, error) {
+	return os.ReadDir(name)
+}
+func (stdHookOutcomeDeps) Rename(o, n string) error { return os.Rename(o, n) }
+func (stdHookOutcomeDeps) Remove(name string) error { return os.Remove(name) }
+func (stdHookOutcomeDeps) ResolveProject() (workflowProjectRef, error) {
+	return currentWorkflowProject()
 }
 
 // HookOutcomeRecord is one record in iter-N.hook-outcomes.yaml. Field
@@ -214,9 +216,9 @@ func hookOutcomeSidecarPath(projectPath string, n int) string {
 //
 // Errors propagate only for filesystem failures other than "directory does
 // not exist" (which is also treated as no active iteration).
-func resolveActiveIterationN(projectPath string) (int, bool, error) {
+func resolveActiveIterationN(hod hookOutcomeDeps, projectPath string) (int, bool, error) {
 	iterDir := IterationLogDir(projectPath)
-	entries, err := hookOutcomeReadDir(iterDir)
+	entries, err := hod.ReadDir(iterDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, false, nil
@@ -249,8 +251,8 @@ func resolveActiveIterationN(projectPath string) (int, bool, error) {
 // shell when the file does not exist. Returned sidecar is schema-valid only
 // after a record is appended (an empty sidecar with records=[] is valid by
 // schema construction; absent file is not an error).
-func loadHookOutcomeSidecar(path string) (*HookOutcomeSidecar, error) {
-	data, err := hookOutcomeReadFile(path)
+func loadHookOutcomeSidecar(hod hookOutcomeDeps, path string) (*HookOutcomeSidecar, error) {
+	data, err := hod.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &HookOutcomeSidecar{
@@ -294,7 +296,7 @@ func hookOutcomeIdempotencyKeyMatches(a, b HookOutcomeRecord) bool {
 // writeHookOutcomeSidecar persists sc to path via the temp-file-then-rename
 // atomic write pattern (mirrors hook_sentinel.go). The schema is validated
 // before any disk touch.
-func writeHookOutcomeSidecar(path string, sc *HookOutcomeSidecar) error {
+func writeHookOutcomeSidecar(hod hookOutcomeDeps, path string, sc *HookOutcomeSidecar) error {
 	if err := validateHookOutcomeSidecar(sc); err != nil {
 		return err
 	}
@@ -312,8 +314,8 @@ func writeHookOutcomeSidecar(path string, sc *HookOutcomeSidecar) error {
 	if err := osWriteFile(tmp, content, 0o644); err != nil {
 		return fmt.Errorf("write hook outcome temp: %w", err)
 	}
-	if err := hookOutcomeRename(tmp, path); err != nil {
-		_ = hookOutcomeRemove(tmp)
+	if err := hod.Rename(tmp, path); err != nil {
+		_ = hod.Remove(tmp)
 		return fmt.Errorf("publish hook outcome sidecar: %w", err)
 	}
 	return nil
@@ -337,7 +339,7 @@ type hookOutcomeWriteInputs struct {
 // buildHookOutcomeRecord constructs and validates a single record from
 // CLI inputs. Defaults: ts → now, correlation_id → sentinel_id when the
 // flag is omitted (per D2 record contract).
-func buildHookOutcomeRecord(in hookOutcomeWriteInputs) (HookOutcomeRecord, error) {
+func buildHookOutcomeRecord(hod hookOutcomeDeps, in hookOutcomeWriteInputs) (HookOutcomeRecord, error) {
 	in.SentinelID = strings.TrimSpace(in.SentinelID)
 	if in.SentinelID == "" {
 		return HookOutcomeRecord{}, fmt.Errorf("--sentinel-id is required")
@@ -362,7 +364,7 @@ func buildHookOutcomeRecord(in hookOutcomeWriteInputs) (HookOutcomeRecord, error
 	}
 	ts := strings.TrimSpace(in.TS)
 	if ts == "" {
-		ts = hookOutcomeNow().UTC().Format(time.RFC3339Nano)
+		ts = hod.Now().UTC().Format(time.RFC3339Nano)
 	}
 	corr := strings.TrimSpace(in.CorrelationID)
 	if corr == "" {
@@ -397,8 +399,8 @@ type hookOutcomeAppendResult struct {
 // sidecar (if any), checks the idempotency key, appends the record, and
 // writes back atomically. Returns the structured result so the cobra
 // handler can render it in --json mode without re-reading the file.
-func appendHookOutcome(projectPath string, rec HookOutcomeRecord) (hookOutcomeAppendResult, error) {
-	n, active, err := resolveActiveIterationN(projectPath)
+func appendHookOutcome(hod hookOutcomeDeps, projectPath string, rec HookOutcomeRecord) (hookOutcomeAppendResult, error) {
+	n, active, err := resolveActiveIterationN(hod, projectPath)
 	if err != nil {
 		return hookOutcomeAppendResult{}, err
 	}
@@ -406,7 +408,7 @@ func appendHookOutcome(projectPath string, rec HookOutcomeRecord) (hookOutcomeAp
 		return hookOutcomeAppendResult{Status: "no-active-iteration"}, nil
 	}
 	path := hookOutcomeSidecarPath(projectPath, n)
-	sc, err := loadHookOutcomeSidecar(path)
+	sc, err := loadHookOutcomeSidecar(hod, path)
 	if err != nil {
 		return hookOutcomeAppendResult{}, err
 	}
@@ -421,7 +423,7 @@ func appendHookOutcome(projectPath string, rec HookOutcomeRecord) (hookOutcomeAp
 		}
 	}
 	sc.Records = append(sc.Records, rec)
-	if err := writeHookOutcomeSidecar(path, sc); err != nil {
+	if err := writeHookOutcomeSidecar(hod, path, sc); err != nil {
 		return hookOutcomeAppendResult{}, err
 	}
 	return hookOutcomeAppendResult{
@@ -447,12 +449,12 @@ func hookOutcomeRecordKey(rec HookOutcomeRecord) string {
 // runHookOutcomeWrite is the cobra handler body for `write`. It enforces
 // the R2.4 timeout via a deadlined goroutine, applies the no-iteration
 // silent-exit behaviour, and renders JSON or human output.
-func runHookOutcomeWrite(in hookOutcomeWriteInputs) error {
-	project, err := hookOutcomeResolveProject()
+func runHookOutcomeWrite(hod hookOutcomeDeps, in hookOutcomeWriteInputs) error {
+	project, err := hod.ResolveProject()
 	if err != nil {
 		return err
 	}
-	rec, err := buildHookOutcomeRecord(in)
+	rec, err := buildHookOutcomeRecord(hod, in)
 	if err != nil {
 		return err
 	}
@@ -466,7 +468,7 @@ func runHookOutcomeWrite(in hookOutcomeWriteInputs) error {
 	}
 	done := make(chan appendOut, 1)
 	go func() {
-		res, err := appendHookOutcome(project.Path, rec)
+		res, err := appendHookOutcome(hod, project.Path, rec)
 		done <- appendOut{res: res, err: err}
 	}()
 	var out appendOut
@@ -561,7 +563,7 @@ func newWorkflowHookOutcomeWriteCmd() *cobra.Command {
 		),
 		Args: deps.NoArgsWithHints("hook-outcome write takes no positional arguments; use flags."),
 		RunE: func(c *cobra.Command, args []string) error {
-			return runHookOutcomeWrite(in)
+			return runHookOutcomeWrite(stdHookOutcomeDeps{}, in)
 		},
 	}
 	cmd.Flags().StringVar(&in.SentinelID, "sentinel-id", "", "Stable <skill>-<run-id> identifier joining this record to the archived sentinel (required)")
