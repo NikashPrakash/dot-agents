@@ -1034,3 +1034,92 @@ func TestCodexMatcherWhitelistIsConstrainedToDocumentedEvents(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderCodexHookEntry_NoCommand covers the two empty-command
+// branches in renderCodexHookEntry: RequiredOn codex → error; not
+// RequiredOn → silent fall-through (include=false). These are the
+// PR #98 review-fix new lines that pushed file coverage below 95%.
+func TestRenderCodexHookEntry_NoCommand(t *testing.T) {
+	t.Run("required-on codex errors", func(t *testing.T) {
+		_, _, include, err := renderCodexHookEntry(HookSpec{
+			Name: "gate", When: "pre_tool_use", Command: "", RequiredOn: []string{"codex"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "no command for codex") {
+			t.Fatalf("expected 'no command for codex' error, got err=%v include=%v", err, include)
+		}
+	})
+	t.Run("not required-on falls through", func(t *testing.T) {
+		_, _, include, err := renderCodexHookEntry(HookSpec{
+			Name: "gate", When: "pre_tool_use", Command: "",
+		})
+		if err != nil {
+			t.Fatalf("expected no error on fall-through, got %v", err)
+		}
+		if include {
+			t.Fatal("expected include=false on empty-command fall-through")
+		}
+	})
+}
+
+// TestRenderCursorHookEntry_NoCommand mirrors TestRenderCodexHookEntry_NoCommand
+// for the Cursor renderer (PR #98 review-fix new lines).
+func TestRenderCursorHookEntry_NoCommand(t *testing.T) {
+	t.Run("required-on cursor errors", func(t *testing.T) {
+		_, _, include, err := renderCursorHookEntry(HookSpec{
+			Name: "gate", When: "pre_tool_use", Command: "", RequiredOn: []string{"cursor"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "no command for cursor") {
+			t.Fatalf("expected 'no command for cursor' error, got err=%v include=%v", err, include)
+		}
+	})
+	t.Run("not required-on falls through", func(t *testing.T) {
+		_, _, include, err := renderCursorHookEntry(HookSpec{
+			Name: "gate", When: "pre_tool_use", Command: "",
+		})
+		if err != nil {
+			t.Fatalf("expected no error on fall-through, got %v", err)
+		}
+		if include {
+			t.Fatal("expected include=false on empty-command fall-through")
+		}
+	})
+}
+
+// TestRenderClaudeHookEntry_NoCommand mirrors the same shape for
+// renderClaudeHookEntry — extracted helper from the PR #98 Sonar
+// cog-reduction commit; cover its empty-command branches too.
+func TestRenderClaudeHookEntry_NoCommand(t *testing.T) {
+	t.Run("required-on claude errors", func(t *testing.T) {
+		_, _, include, err := renderClaudeHookEntry(HookSpec{
+			Name: "gate", When: "pre_tool_use", Command: "", RequiredOn: []string{"claude"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "no command for claude") {
+			t.Fatalf("expected 'no command for claude' error, got err=%v include=%v", err, include)
+		}
+	})
+	t.Run("not required-on falls through", func(t *testing.T) {
+		_, _, include, err := renderClaudeHookEntry(HookSpec{
+			Name: "gate", When: "pre_tool_use", Command: "",
+		})
+		if err != nil {
+			t.Fatalf("expected no error on fall-through, got %v", err)
+		}
+		if include {
+			t.Fatal("expected include=false on empty-command fall-through")
+		}
+	})
+}
+
+// TestValidateHookWhenEvents_BackwardCompat covers the L587-592 branch:
+// a manifest with neither `when` nor `when_events` is accepted (returns
+// nil, nil) because many existing hooks rely on platform_overrides.event
+// rather than canonical When. This branch was previously uncovered.
+func TestValidateHookWhenEvents_BackwardCompat(t *testing.T) {
+	events, err := validateHookWhenEvents("HOOK.yaml", hookManifest{})
+	if err != nil {
+		t.Fatalf("expected nil error for empty when + empty when_events, got %v", err)
+	}
+	if events != nil {
+		t.Errorf("expected nil events on backward-compat path, got %v", events)
+	}
+}
