@@ -252,15 +252,32 @@ A matcher is only set when the vendor reference documents matcher
 narrowing for that event. The Codex matcher whitelist is encoded in
 `codexMatcherWhitelist` in
 [`internal/platform/hooks.go`](../internal/platform/hooks.go); the
-P1c verification round (May 2026) confirmed only the pre-existing
-tool-boundary surface qualifies.
+P1c verification round (May 2026) reviewed the Codex hooks reference
+and confirmed the per-event matcher surface below.
 
 | Vendor          | Events that render a matcher                          | Events that render `matcher=""` (and gate scripts must parse input instead) |
 |-----------------|-------------------------------------------------------|-----------------------------------------------------------------------------|
 | Claude Code     | every documented event                                | n/a — Claude matcher applies to every event in the table                    |
-| Codex           | `SessionStart`, `PreToolUse`, `PostToolUse`           | `Stop`, `SubagentStop`, `SubagentStart`, `PreCompact`, `PostCompact`, `PermissionRequest`, `UserPromptSubmit` |
+| Codex           | `PermissionRequest`, `PostCompact`, `PostToolUse`, `PreCompact`, `PreToolUse`, `SessionStart`, `SubagentStart`, `SubagentStop` | `Stop`, `UserPromptSubmit` (vendor docs: matcher explicitly ignored)        |
 | Cursor          | per-spec `match.expression` is rendered when set; vendor defaults applied otherwise | n/a — Cursor renderer emits the configured matcher verbatim                |
 | GitHub Copilot  | none — Copilot single-event files do not accept matcher narrowing in the documented schema; bundles with matchers are skipped | every event                                                                |
+
+Codex matcher semantics per event (from the Codex hooks reference):
+
+| Codex event          | What matcher filters       | Value examples                                |
+|----------------------|----------------------------|-----------------------------------------------|
+| `PermissionRequest`  | tool name                  | `Bash`, `^apply_patch$`, `mcp__filesystem__.*`|
+| `PostToolUse`        | tool name                  | `Bash`, `Edit\|Write`, `mcp__filesystem__.*`  |
+| `PostCompact`        | compaction trigger         | `manual`, `auto`, `manual\|auto`              |
+| `PreCompact`         | compaction trigger         | `manual`, `auto`, `manual\|auto`              |
+| `PreToolUse`         | tool name                  | `Bash`, `^apply_patch$`, `mcp__filesystem__.*`|
+| `SessionStart`       | start source               | `startup`, `resume`, `clear`, `compact`       |
+| `SubagentStart`      | subagent type              | depends on the subagent that starts           |
+| `SubagentStop`       | subagent type              | depends on the subagent that stops            |
+| `Stop`               | (matcher ignored by Codex) | `""`                                          |
+| `UserPromptSubmit`   | (matcher ignored by Codex) | `""`                                          |
+
+For `apply_patch`, matcher values can also use `Edit` or `Write`.
 
 ### Approved non-terminal lifecycle capabilities (verified)
 

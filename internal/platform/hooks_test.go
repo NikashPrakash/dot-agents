@@ -580,14 +580,14 @@ func assertCopilotHookFileRenders(t *testing.T, spec HookSpec, wantName string, 
 // unsupported value must be omitted entirely without raising an error
 // when the hook is not RequiredOn that platform (fall-through per D2).
 func TestCanonicalWhenEventMappingRenders(t *testing.T) {
-	t.Run("codex subagent_start renders under SubagentStart", func(t *testing.T) {
-		// Per R6.5 the Codex matcher whitelist for SubagentStart is NOT
-		// extended in p1b — verify the rendered matcher is empty.
+	t.Run("codex subagent_start renders under SubagentStart with matcher", func(t *testing.T) {
+		// Codex docs document SubagentStart matcher narrowing on subagent
+		// type — codexMatcherWhitelist includes it post-PR-#98 review.
 		assertCodexConfigRenders(t,
 			[]HookSpec{{Name: "bootstrap", When: "subagent_start", Command: "/tmp/bootstrap.sh"}},
 			map[string]string{
 				"hooks.SubagentStart.0.hooks.0.command": "/tmp/bootstrap.sh",
-				"hooks.SubagentStart.0.matcher":         "",
+				"hooks.SubagentStart.0.matcher":         "*",
 			},
 		)
 	})
@@ -887,26 +887,30 @@ func TestRenderClaudeHookSettingsExpandsWhenEvents(t *testing.T) {
 
 // TestRenderCodexHookConfigExpandsWhenEventsAndHonorsMatcherWhitelist
 // is the load-bearing matcher-boundary regression: a multi-event hook
-// containing PreToolUse (matcher-supported per Codex docs) and Stop /
-// SubagentStop / SubagentStart (no matcher contract) must render with
-// matcher="*" for PreToolUse and matcher="" for the rest. This guards
-// the P1b worker note (PR #95) committing the whitelist as
-// {SessionStart, PreToolUse, PostToolUse}.
+// containing matcher-supported events (PreToolUse, SubagentStart,
+// SubagentStop per Codex docs) and matcher-unsupported events (Stop,
+// UserPromptSubmit per Codex docs) must render with matcher="*" for the
+// supported set and matcher="" for the unsupported set. This guards the
+// initial P1b worker note (PR #95) that committed an incomplete
+// whitelist of {SessionStart, PreToolUse, PostToolUse} and the broader
+// P1c verification surface from the Codex hooks reference.
 func TestRenderCodexHookConfigExpandsWhenEventsAndHonorsMatcherWhitelist(t *testing.T) {
 	spec := HookSpec{
 		Name:       "gate",
-		WhenEvents: []string{"pre_tool_use", "subagent_start", "stop", "subagent_stop"},
+		WhenEvents: []string{"pre_tool_use", "subagent_start", "stop", "subagent_stop", "user_prompt_submit"},
 		Command:    "/tmp/gate.sh",
 	}
 	assertCodexConfigRenders(t, []HookSpec{spec}, map[string]string{
-		"hooks.PreToolUse.0.hooks.0.command":    "/tmp/gate.sh",
-		"hooks.PreToolUse.0.matcher":            "*",
-		"hooks.SubagentStart.0.hooks.0.command": "/tmp/gate.sh",
-		"hooks.SubagentStart.0.matcher":         "",
-		"hooks.Stop.0.hooks.0.command":          "/tmp/gate.sh",
-		"hooks.Stop.0.matcher":                  "",
-		"hooks.SubagentStop.0.hooks.0.command":  "/tmp/gate.sh",
-		"hooks.SubagentStop.0.matcher":          "",
+		"hooks.PreToolUse.0.hooks.0.command":       "/tmp/gate.sh",
+		"hooks.PreToolUse.0.matcher":               "*",
+		"hooks.SubagentStart.0.hooks.0.command":    "/tmp/gate.sh",
+		"hooks.SubagentStart.0.matcher":            "*",
+		"hooks.SubagentStop.0.hooks.0.command":     "/tmp/gate.sh",
+		"hooks.SubagentStop.0.matcher":             "*",
+		"hooks.Stop.0.hooks.0.command":             "/tmp/gate.sh",
+		"hooks.Stop.0.matcher":                     "",
+		"hooks.UserPromptSubmit.0.hooks.0.command": "/tmp/gate.sh",
+		"hooks.UserPromptSubmit.0.matcher":         "",
 	})
 }
 
@@ -989,11 +993,23 @@ func TestRenderCopilotHookFileFanoutPreservesSingleEventFilename(t *testing.T) {
 }
 
 // TestCodexMatcherWhitelistIsConstrainedToDocumentedEvents pins the
-// Codex matcher boundary: SessionStart / PreToolUse / PostToolUse are
-// in; every other documented Codex event must render matcher="". This
-// is the assertion the P1b worker note flagged as required for P1c.
+// Codex matcher boundary per the Codex hooks reference:
+// PermissionRequest / PostCompact / PostToolUse / PreCompact /
+// PreToolUse / SessionStart / SubagentStart / SubagentStop are in;
+// Stop and UserPromptSubmit are explicitly matcher-ignored by Codex.
+// Locally-mirrors codexMatcherWhitelist so a future drift between the
+// two surfaces fails this test before the renderer fails the docs.
 func TestCodexMatcherWhitelistIsConstrainedToDocumentedEvents(t *testing.T) {
-	whitelisted := map[string]bool{"SessionStart": true, "PreToolUse": true, "PostToolUse": true}
+	whitelisted := map[string]bool{
+		"PermissionRequest": true,
+		"PostCompact":       true,
+		"PostToolUse":       true,
+		"PreCompact":        true,
+		"PreToolUse":        true,
+		"SessionStart":      true,
+		"SubagentStart":     true,
+		"SubagentStop":      true,
+	}
 	for canonical, codexEvent := range codexEventTable {
 		spec := HookSpec{Name: "probe", When: canonical, Command: "/tmp/probe.sh"}
 		content, err := renderCodexHookConfig([]HookSpec{spec})

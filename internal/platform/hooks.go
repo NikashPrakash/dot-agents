@@ -899,17 +899,32 @@ func renderClaudeHookEntry(spec HookSpec) (string, claudeRenderedEntry, bool, er
 
 // codexMatcherWhitelist enumerates the Codex events whose official
 // documentation establishes matcher narrowing. P1c verification reviewed
-// the Codex hooks reference (https://developers.openai.com/codex/hooks)
-// and confirmed only the pre-existing tool-boundary events expose a
-// matcher contract. Other events (SubagentStart, Stop, SubagentStop,
-// PreCompact, PostCompact, PermissionRequest, UserPromptSubmit) lack a
-// documented matcher surface and therefore render with matcher="" per
-// the contract's "Matcher Boundary" rule — gate scripts must parse the
+// the Codex hooks reference (https://developers.openai.com/codex/hooks);
+// the surface is broader than the original P1b-deferred trio per the docs:
+//
+//	Event             What matcher filters       Notes
+//	PermissionRequest tool name                   Bash, apply_patch, MCP tool names
+//	PostToolUse       tool name                   Bash, apply_patch, MCP tool names
+//	PostCompact       compaction trigger          manual | auto
+//	PreCompact        compaction trigger          manual | auto
+//	PreToolUse        tool name                   Bash, apply_patch, MCP tool names
+//	SessionStart      start source                startup | resume | clear | compact
+//	SubagentStart     subagent type               depends on subagent
+//	SubagentStop      subagent type               depends on subagent
+//
+// UserPromptSubmit and Stop explicitly do NOT support matcher — any value
+// is ignored by Codex. Events outside this map render with matcher="" per
+// the contract's "Matcher Boundary" rule so gate scripts parse the
 // vendor-provided input rather than rely on matcher narrowing.
 var codexMatcherWhitelist = map[string]bool{
-	"SessionStart": true,
-	"PreToolUse":   true,
-	"PostToolUse":  true,
+	"PermissionRequest": true,
+	"PostCompact":       true,
+	"PostToolUse":       true,
+	"PreCompact":        true,
+	"PreToolUse":        true,
+	"SessionStart":      true,
+	"SubagentStart":     true,
+	"SubagentStop":      true,
 }
 
 func renderCodexHookConfig(specs []HookSpec) ([]byte, error) {
