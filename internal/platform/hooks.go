@@ -854,30 +854,47 @@ func renderClaudeHookSettings(specs []HookSpec) ([]byte, error) {
 	}
 	for _, parent := range specs {
 		for _, spec := range expandHookSpecEvents(parent) {
-			event, ok := claudeEventName(spec)
-			if !ok {
-				if hookRequiredOnPlatform(spec, "claude") {
-					return nil, fmt.Errorf("hook %q is not representable for claude event %q", spec.Name, spec.When)
-				}
+			event, entry, include, err := renderClaudeHookEntry(spec)
+			if err != nil {
+				return nil, err
+			}
+			if !include {
 				continue
 			}
-			command := ResolveHookCommand(spec)
-			if command == "" {
-				if hookRequiredOnPlatform(spec, "claude") {
-					return nil, fmt.Errorf("hook %q has no command for claude", spec.Name)
-				}
-				continue
-			}
-			out.Hooks[event] = append(out.Hooks[event], claudeRenderedEntry{
-				Matcher: matcherForSpec(spec, "claude", "*"),
-				Hooks: []claudeRenderedAction{{
-					Type:    "command",
-					Command: command,
-				}},
-			})
+			out.Hooks[event] = append(out.Hooks[event], entry)
 		}
 	}
 	return marshalJSON(out)
+}
+
+// renderClaudeHookEntry resolves the per-spec event mapping + command
+// resolution for Claude. Returns include=false when the spec falls
+// through (not RequiredOn claude); returns a non-nil error only when
+// the spec IS RequiredOn claude but cannot be represented or has no
+// command. Extracted from renderClaudeHookSettings to keep the outer
+// fanout loop under Sonar's cog-complexity gate.
+func renderClaudeHookEntry(spec HookSpec) (string, claudeRenderedEntry, bool, error) {
+	event, ok := claudeEventName(spec)
+	if !ok {
+		if hookRequiredOnPlatform(spec, "claude") {
+			return "", claudeRenderedEntry{}, false, fmt.Errorf("hook %q is not representable for claude event %q", spec.Name, spec.When)
+		}
+		return "", claudeRenderedEntry{}, false, nil
+	}
+	command := ResolveHookCommand(spec)
+	if command == "" {
+		if hookRequiredOnPlatform(spec, "claude") {
+			return "", claudeRenderedEntry{}, false, fmt.Errorf("hook %q has no command for claude", spec.Name)
+		}
+		return "", claudeRenderedEntry{}, false, nil
+	}
+	return event, claudeRenderedEntry{
+		Matcher: matcherForSpec(spec, "claude", "*"),
+		Hooks: []claudeRenderedAction{{
+			Type:    "command",
+			Command: command,
+		}},
+	}, true, nil
 }
 
 // codexMatcherWhitelist enumerates the Codex events whose official
@@ -899,34 +916,50 @@ func renderCodexHookConfig(specs []HookSpec) ([]byte, error) {
 	out := codexRenderedHooks{Hooks: map[string][]claudeRenderedEntry{}}
 	for _, parent := range specs {
 		for _, spec := range expandHookSpecEvents(parent) {
-			event, ok := codexEventName(spec)
-			if !ok {
-				if hookRequiredOnPlatform(spec, "codex") {
-					return nil, fmt.Errorf("hook %q is not representable for codex event %q", spec.Name, spec.When)
-				}
+			event, entry, include, err := renderCodexHookEntry(spec)
+			if err != nil {
+				return nil, err
+			}
+			if !include {
 				continue
 			}
-			command := ResolveHookCommand(spec)
-			if command == "" {
-				if hookRequiredOnPlatform(spec, "codex") {
-					return nil, fmt.Errorf("hook %q has no command for codex", spec.Name)
-				}
-				continue
-			}
-			matcher := ""
-			if codexMatcherWhitelist[event] {
-				matcher = matcherForSpec(spec, "codex", "*")
-			}
-			out.Hooks[event] = append(out.Hooks[event], claudeRenderedEntry{
-				Matcher: matcher,
-				Hooks: []claudeRenderedAction{{
-					Type:    "command",
-					Command: command,
-				}},
-			})
+			out.Hooks[event] = append(out.Hooks[event], entry)
 		}
 	}
 	return marshalJSON(out)
+}
+
+// renderCodexHookEntry mirrors renderClaudeHookEntry for Codex, with one
+// extra step: matcher narrowing is only emitted for events in
+// codexMatcherWhitelist (per P1c verification of the Codex hooks
+// reference). Other events render with matcher="" so gate scripts parse
+// the vendor-provided input instead.
+func renderCodexHookEntry(spec HookSpec) (string, claudeRenderedEntry, bool, error) {
+	event, ok := codexEventName(spec)
+	if !ok {
+		if hookRequiredOnPlatform(spec, "codex") {
+			return "", claudeRenderedEntry{}, false, fmt.Errorf("hook %q is not representable for codex event %q", spec.Name, spec.When)
+		}
+		return "", claudeRenderedEntry{}, false, nil
+	}
+	command := ResolveHookCommand(spec)
+	if command == "" {
+		if hookRequiredOnPlatform(spec, "codex") {
+			return "", claudeRenderedEntry{}, false, fmt.Errorf("hook %q has no command for codex", spec.Name)
+		}
+		return "", claudeRenderedEntry{}, false, nil
+	}
+	matcher := ""
+	if codexMatcherWhitelist[event] {
+		matcher = matcherForSpec(spec, "codex", "*")
+	}
+	return event, claudeRenderedEntry{
+		Matcher: matcher,
+		Hooks: []claudeRenderedAction{{
+			Type:    "command",
+			Command: command,
+		}},
+	}, true, nil
 }
 
 func renderCursorHookConfig(specs []HookSpec) ([]byte, error) {
