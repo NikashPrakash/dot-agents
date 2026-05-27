@@ -202,6 +202,32 @@ func TestCopyStarterEntryStatErrorPropagates(t *testing.T) {
 	}
 }
 
+// checkPathIsCrossPlatformSafe verifies that a single path is cross-platform
+// safe: absolute, lexically clean, with no double separators, and using the
+// host OS's native separator style.
+func checkPathIsCrossPlatformSafe(t *testing.T, path string, doubleSep string) {
+	if !filepath.IsAbs(path) {
+		t.Errorf("expected absolute path, got %q", path)
+	}
+	if cleaned := filepath.Clean(path); cleaned != path {
+		t.Errorf("path not lexically clean: got %q, want %q", path, cleaned)
+	}
+	if strings.Contains(path, doubleSep) {
+		t.Errorf("path contains double separator %q: %q", doubleSep, path)
+	}
+	// On Windows the native separator is `\`; a forward slash in a
+	// path emitted by the scaffolder indicates an embed-FS path
+	// leaked through without filepath.FromSlash conversion. On
+	// POSIX `/` is the native separator and a `\` would be the
+	// inverse smell (rare, but check both for symmetry).
+	if runtime.GOOS == "windows" && strings.Contains(path, "/") {
+		t.Errorf("windows path contains forward slash: %q", path)
+	}
+	if runtime.GOOS != "windows" && strings.Contains(path, `\`) {
+		t.Errorf("posix path contains backslash: %q", path)
+	}
+}
+
 // TestCopyStarterAssetsPathsAreCrossPlatform walks the tree produced by
 // CopyMissingStarterAssets and asserts that every emitted path is
 // cross-platform safe: absolute, lexically clean (no `..` or double
@@ -221,26 +247,7 @@ func TestCopyStarterAssetsPathsAreCrossPlatform(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if !filepath.IsAbs(path) {
-			t.Errorf("expected absolute path, got %q", path)
-		}
-		if cleaned := filepath.Clean(path); cleaned != path {
-			t.Errorf("path not lexically clean: got %q, want %q", path, cleaned)
-		}
-		if strings.Contains(path, doubleSep) {
-			t.Errorf("path contains double separator %q: %q", doubleSep, path)
-		}
-		// On Windows the native separator is `\`; a forward slash in a
-		// path emitted by the scaffolder indicates an embed-FS path
-		// leaked through without filepath.FromSlash conversion. On
-		// POSIX `/` is the native separator and a `\` would be the
-		// inverse smell (rare, but check both for symmetry).
-		if runtime.GOOS == "windows" && strings.Contains(path, "/") {
-			t.Errorf("windows path contains forward slash: %q", path)
-		}
-		if runtime.GOOS != "windows" && strings.Contains(path, `\`) {
-			t.Errorf("posix path contains backslash: %q", path)
-		}
+		checkPathIsCrossPlatformSafe(t, path, doubleSep)
 		return nil
 	})
 	if walkErr != nil {
