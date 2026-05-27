@@ -35,10 +35,60 @@ func TestCopyMissingStarterAssetsCopiesStarterBundle(t *testing.T) {
 		"settings/global/claude-code.json",
 		"skills/global/agent-start/SKILL.md",
 		"skills/global/review-pr/templates/review-output.md",
+		// P3 starter-promotion: iteration-close, isp, loop-worker skills
+		// plus the loop-worker agent and profile must land via the same
+		// embedded-walk path. New top-level descendants under starter/
+		// (agents/, profiles/) require representative assertions because
+		// `da init` relies on them being copied without loader changes.
+		"skills/global/iteration-close/SKILL.md",
+		"skills/global/iteration-close/instructions/workflow.md",
+		"skills/global/iteration-close/instructions/gotchas.md",
+		"skills/global/iteration-close/instructions/proposal-criteria.md",
+		"skills/global/iteration-close/scripts/propose.sh",
+		"skills/global/iteration-close/templates/self-assessment-line.md",
+		"skills/global/isp/SKILL.md",
+		"skills/global/isp/instructions/orientation.md",
+		"skills/global/isp/instructions/task-selection.md",
+		"skills/global/isp/instructions/direct-vs-fanout.md",
+		"skills/global/isp/instructions/fanout.md",
+		"skills/global/isp/instructions/staged-runtime.md",
+		"skills/global/loop-worker/SKILL.md",
+		"skills/global/loop-worker/instructions/startup.md",
+		"skills/global/loop-worker/instructions/gotchas.md",
+		"agents/global/loop-worker/AGENT.md",
+		"profiles/loop-worker.md",
 	} {
 		if _, err := os.Stat(filepath.Join(tmp, filepath.FromSlash(rel))); err != nil {
 			t.Fatalf("expected %s: %v", rel, err)
 		}
+	}
+}
+
+// TestCopyMissingStarterAssetsSetsExecBitOnEmbeddedShScripts asserts that
+// real `.sh` scripts in the embedded starter (e.g. iteration-close's
+// propose.sh promoted in P3) land with the POSIX exec bit set. The generic
+// TestCopyStarterEntryShSuffixSetsExecBit covers the branch logic with a
+// synthetic dir-entry; this test pins the contract for the real starter
+// shipped to `da init` consumers.
+func TestCopyMissingStarterAssetsSetsExecBitOnEmbeddedShScripts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Same [genuine-posix] classification as
+		// TestCopyStarterEntryShSuffixSetsExecBit — NTFS has no per-user
+		// exec mode bit, and the scaffolder's exec-bit branch is a no-op
+		// on Windows by design.
+		t.Skip("file modes differ on windows")
+	}
+	tmp := t.TempDir()
+	if err := CopyMissingStarterAssets(tmp); err != nil {
+		t.Fatalf("CopyMissingStarterAssets: %v", err)
+	}
+	script := filepath.Join(tmp, "skills", "global", "iteration-close", "scripts", "propose.sh")
+	fi, err := os.Stat(script)
+	if err != nil {
+		t.Fatalf("stat propose.sh: %v", err)
+	}
+	if fi.Mode().Perm()&0111 == 0 {
+		t.Errorf("expected exec bit on embedded propose.sh; got mode %v", fi.Mode())
 	}
 }
 
