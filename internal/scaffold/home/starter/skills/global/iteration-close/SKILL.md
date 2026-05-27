@@ -49,7 +49,7 @@ Closes out an **implementation** iteration by persisting workflow state through 
 5. **Finish canonical workflow** *(pick one path)*
    Load → `instructions/workflow.md` § Delegation vs direct closeout, then § Merge-back (delegated) or § Advance Task (direct)
    - **Delegated worker:** run `workflow merge-back` after verify + self-review + checkpoint; do **not** run `workflow advance` yourself.
-   - **Direct worker:** run `workflow advance <plan-id> <task-id> completed` only when the iteration fully completed that YAML task and you are not under an active parent delegation.
+   - **Direct worker:** run `workflow advance <plan-id> --task <task-id> --status completed` only when the iteration fully completed that YAML task and you are not under an active parent delegation.
 
 6. **Refresh the production binary** *(stable section/feature only)*
    Load → `instructions/workflow.md` § Refresh Production Binary

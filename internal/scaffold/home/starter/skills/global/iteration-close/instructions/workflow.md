@@ -214,8 +214,8 @@ da workflow tasks <plan-id>
 
 If a task is `in_progress` and the iteration fully resolved it:
 ```bash
-da workflow advance <plan-id> <task-id> completed
-# e.g.: da workflow advance resource-intent-centralization phase-6-verification completed
+da workflow advance <plan-id> --task <task-id> --status completed
+# e.g.: da workflow advance resource-intent-centralization --task phase-6-verification --status completed
 ```
 
 Do NOT advance unless:
