@@ -1,5 +1,7 @@
 # dot-agents
 
+## **ARCHIVED** now lives under the org [AGOrcha - dot-agents](https://github.com/AGOrcha/dot-agents)
+
 **The operational layer for AI coding agents**
 
 One CLI to manage configurations and workflow state across Cursor, Claude Code, Codex, GitHub Copilot, and more.
